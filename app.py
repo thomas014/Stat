@@ -17,13 +17,15 @@ method_info = {
         "name": "One-Sample T-Test (vs Constant)",
         "when": "Comparing the MEAN of a group against a Reference Value (Normal Data).",
         "assumptions": "Normality (Shapiro > 0.05).",
+        "min_size": "Min N=2. (No Max, but N>5000 may overpower P-values).",
         "null_hypo": "The group mean equals the Reference Value.",
         "interpret": "If P < 0.05, the mean differs from Reference."
     },
-    'wilcoxon': { ### NEW METHOD ###
+    'wilcoxon': {
         "name": "Wilcoxon Signed-Rank (vs Constant)",
         "when": "Comparing the MEDIAN of a group against a Reference Value (Non-Normal Data).",
         "assumptions": "Symmetric distribution (does not need normality).",
+        "min_size": "Min N=5. (No Max).",
         "null_hypo": "The group median equals the Reference Value.",
         "interpret": "If P < 0.05, the median differs from Reference."
     },
@@ -31,6 +33,7 @@ method_info = {
         "name": "Independent T-Test (2 Groups)",
         "when": "Comparing averages of exactly 2 independent groups.",
         "assumptions": "Normality, Homogeneity of Variance.",
+        "min_size": "Min N=2/group. (No Max, but check effect size if N is huge).",
         "null_hypo": "The means of the two groups are equal.",
         "interpret": "If P < 0.05, the difference is real."
     },
@@ -38,6 +41,7 @@ method_info = {
         "name": "One-Way ANOVA (3+ Groups)",
         "when": "Comparing averages of 3+ independent groups.",
         "assumptions": "Normality, Homogeneity of Variance.",
+        "min_size": "Min N=2/group. (No Max).",
         "null_hypo": "All group means are equal.",
         "interpret": "If P < 0.05, at least one group is different."
     },
@@ -45,6 +49,7 @@ method_info = {
         "name": "Mann-Whitney U (Non-Parametric)",
         "when": "Comparing 2 groups when data is NOT normal.",
         "assumptions": "Independent samples.",
+        "min_size": "Min N=5/group. (No Max).",
         "null_hypo": "Distributions of both groups are equal.",
         "interpret": "If P < 0.05, distributions differ."
     },
@@ -52,6 +57,7 @@ method_info = {
         "name": "Kruskal-Wallis (Non-Parametric)",
         "when": "Comparing 3+ groups when data is NOT normal.",
         "assumptions": "Independent samples.",
+        "min_size": "Min N=5/group. (No Max).",
         "null_hypo": "Population medians are equal.",
         "interpret": "If P < 0.05, groups differ."
     },
@@ -59,6 +65,7 @@ method_info = {
         "name": "Pearson Correlation",
         "when": "Linear relationship between two continuous numbers.",
         "assumptions": "Linearity, Normality.",
+        "min_size": "Min Pairs=3. (No Max).",
         "null_hypo": "No linear correlation (r = 0).",
         "interpret": "P < 0.05 means a strong linear trend."
     },
@@ -66,13 +73,15 @@ method_info = {
         "name": "Spearman Correlation",
         "when": "Ranked/Non-linear relationship.",
         "assumptions": "Monotonic relationship.",
+        "min_size": "Min Pairs=5. (No Max).",
         "null_hypo": "No monotonic correlation.",
         "interpret": "P < 0.05 means a strong monotonic trend."
     },
     'chi2': {
         "name": "Chi-Square Test",
         "when": "Association between two Categorical variables.",
-        "assumptions": "Expected counts > 5.",
+        "assumptions": "Expected counts > 5 in 80% of cells.",
+        "min_size": "Total N > 20. (No Max).",
         "null_hypo": "Variables are independent.",
         "interpret": "P < 0.05 means variables are related."
     }
@@ -122,19 +131,33 @@ if uploaded_file is not None:
                 c_vis1, c_vis2 = st.columns([1, 2])
                 with c_vis1:
                     st.write("**Normality Statistics:**")
+                    normality_results = []
+                    
+                    def check_normality(data, name):
+                        N = len(data)
+                        if N < 3:
+                            return {"Group": name, "N": N, "Test": "Too Small", "P-Val": "-", "Res": "Unknown"}
+                        elif N > 5000:
+                            result = stats.anderson(data, dist='norm')
+                            stat = result.statistic
+                            crit = result.critical_values[2] 
+                            conclusion = "Normal ✅" if stat < crit else "Non-Normal ⚠️"
+                            return {"Group": name, "N": N, "Test": "Anderson (Large N)", "P-Val": f"Stat={stat:.2f}", "Res": conclusion}
+                        else:
+                            stat, p = stats.shapiro(data)
+                            conclusion = "Normal ✅" if p > 0.05 else "Non-Normal ⚠️"
+                            return {"Group": name, "N": N, "Test": "Shapiro", "P-Val": f"{p:.4f}", "Res": conclusion}
+
                     if is_grouping:
-                        normality_results = []
                         groups = df_clean[x_col].unique()
                         for g in groups:
                             group_data = df_clean[df_clean[x_col] == g][y_col]
-                            if len(group_data) >= 3: 
-                                stat, p = stats.shapiro(group_data)
-                                conclusion = "Normal ✅" if p > 0.05 else "Non-Normal ⚠️"
-                                normality_results.append({"Group": g, "P-Val": f"{p:.4f}", "Res": conclusion})
-                        st.dataframe(pd.DataFrame(normality_results), hide_index=True)
+                            normality_results.append(check_normality(group_data, g))
                     else:
-                        stat, p = stats.shapiro(df_clean[y_col])
-                        st.metric("Global Normality P-Value", f"{p:.4f}", "Normal" if p>0.05 else "Non-Normal")
+                        normality_results.append(check_normality(df_clean[y_col], "Global"))
+                        
+                    st.dataframe(pd.DataFrame(normality_results), hide_index=True)
+                    st.caption("Note: For N > 5000, Anderson-Darling is used instead of Shapiro-Wilk.")
 
                 with c_vis2:
                     st.write("**Distribution Visualizer:**")
@@ -160,7 +183,7 @@ if uploaded_file is not None:
         
         method_map = {
             "One-Sample T-Test (Compare Mean vs Ref)": "ttest_1samp",
-            "Wilcoxon Signed-Rank (Compare Median vs Ref)": "wilcoxon", # <--- NEW OPTION
+            "Wilcoxon Signed-Rank (Compare Median vs Ref)": "wilcoxon",
             "Independent T-Test (2 Groups)": "ttest_ind",
             "One-Way ANOVA (3+ Groups)": "anova",
             "Mann-Whitney U (Non-Parametric 2 Groups)": "mannwhitney",
@@ -174,14 +197,16 @@ if uploaded_file is not None:
         method_key = method_map[selected_label]
         info = method_info[method_key]
 
-        # --- INPUT FOR REFERENCE VALUE (Appears for both One-Sample methods) ---
         ref_value = 0.0
-        if method_key in ['ttest_1samp', 'wilcoxon']: # <--- UPDATED LOGIC
+        if method_key in ['ttest_1samp', 'wilcoxon']:
             st.info("ℹ️ This test compares your data against a fixed Reference number.")
             ref_value = st.number_input("Enter Reference Value:", value=0.0)
 
+        # --- UPDATED METHOD GUIDE ---
         with st.expander(f"📘 Method Guide: {info['name']}", expanded=False):
             st.markdown(f"**When to use:** {info['when']}")
+            st.markdown(f"**Assumptions:** {info['assumptions']}")
+            st.markdown(f"**Minimum Group Size:** {info['min_size']}")
             st.markdown(f"**Interpretation:** {info['interpret']}")
 
         # --- E. RUN ANALYSIS ---
@@ -189,9 +214,11 @@ if uploaded_file is not None:
             st.divider()
             st.header(f"🚀 Results: {info['name']}")
             
+            # Ref Card still displayed for easy printing/copying
             ref_data = {
                 "Null Hypothesis": [info['null_hypo']],
                 "Assumptions": [info['assumptions']],
+                "Sample Size Notes": [info['min_size']],
                 "Interpretation": [info['interpret']]
             }
             st.table(pd.DataFrame(ref_data))
@@ -199,13 +226,15 @@ if uploaded_file is not None:
             df_clean = df[[x_col, y_col]].dropna()
             x_data = df_clean[x_col]
             y_data = df_clean[y_col]
+            
+            if len(df_clean) < 5:
+                st.warning("⚠️ Warning: Small sample size (N < 5). Results may be unreliable.")
 
             st.subheader("1. Test Results")
 
-            # --- NEW LOGIC: ONE-SAMPLE (T-TEST OR WILCOXON) ---
+            # --- ONE-SAMPLE ---
             if method_key in ['ttest_1samp', 'wilcoxon']:
                 st.write(f"Testing against Reference Value: **{ref_value}**")
-                
                 results = []
                 groups = x_data.unique()
                 for g in groups:
@@ -213,36 +242,27 @@ if uploaded_file is not None:
                     
                     if method_key == 'ttest_1samp':
                         stat, p_val = stats.ttest_1samp(g_data, popmean=ref_value)
-                        metric_name = "Mean"
-                        metric_val = g_data.mean()
+                        metric_name, metric_val = "Mean", g_data.mean()
                     else:
-                        # Wilcoxon requires the difference (data - ref)
                         stat, p_val = stats.wilcoxon(g_data - ref_value)
-                        metric_name = "Median"
-                        metric_val = g_data.median()
+                        metric_name, metric_val = "Median", g_data.median()
                     
                     sig = "Significant 💥" if p_val < 0.05 else "Not Sig"
-                    diff = metric_val - ref_value
-                    
                     results.append({
-                        "Group": g,
+                        "Group": g, "N": len(g_data),
                         f"{metric_name}": f"{metric_val:.2f}",
-                        "Diff": f"{diff:.2f}",
-                        "P-Value": f"{p_val:.4e}",
-                        "Result": sig
+                        "P-Value": f"{p_val:.4e}", "Result": sig
                     })
                 
                 res_df = pd.DataFrame(results)
                 st.dataframe(res_df.style.apply(lambda x: ['background-color: #d4edda' if "💥" in x['Result'] else '' for i in x], axis=1))
                 
-                # Visualization: Boxplot with Reference Line
                 fig, ax = plt.subplots(figsize=(8, 4))
                 sns.boxplot(x=x_col, y=y_col, data=df_clean, hue=x_col, palette="coolwarm", legend=False, ax=ax)
-                ax.axhline(ref_value, color='red', linestyle='--', linewidth=2, label=f'Ref ({ref_value})')
-                ax.legend()
+                ax.axhline(ref_value, color='red', linestyle='--', linewidth=2)
                 st.pyplot(fig)
 
-            # --- EXISTING LOGIC: ANOVA / KRUSKAL ---
+            # --- ANOVA / KRUSKAL ---
             elif method_key in ['anova', 'kruskal']:
                 groups = [y_data[x_data == g] for g in x_data.unique()]
                 if method_key == 'anova': stat, p = stats.f_oneway(*groups)
@@ -277,7 +297,7 @@ if uploaded_file is not None:
                         sns.heatmap(p_matrix, annot=True, cmap="coolwarm_r", vmin=0, vmax=0.05, ax=ax)
                         st.pyplot(fig)
 
-            # --- EXISTING LOGIC: T-TEST / MANN-WHITNEY ---
+            # --- T-TEST / MANN-WHITNEY ---
             elif method_key in ['ttest_ind', 'mannwhitney']:
                 groups = x_data.unique()
                 if len(groups) != 2:
@@ -287,13 +307,12 @@ if uploaded_file is not None:
                     g2 = y_data[x_data == groups[1]]
                     if method_key == 'ttest_ind': stat, p = stats.ttest_ind(g1, g2)
                     else: stat, p = stats.mannwhitneyu(g1, g2)
-                    
                     st.metric("P-Value", f"{p:.4e}")
                     fig, ax = plt.subplots(figsize=(8, 4))
                     sns.boxplot(x=x_col, y=y_col, data=df_clean, hue=x_col, palette="Set2", legend=False, ax=ax)
                     st.pyplot(fig)
 
-            # --- EXISTING LOGIC: CORRELATIONS ---
+            # --- CORRELATIONS ---
             elif method_key in ['pearson', 'spearman', 'chi2']:
                 if method_key == 'chi2':
                     ct = pd.crosstab(x_data, y_data)
