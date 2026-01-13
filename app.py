@@ -96,45 +96,55 @@ if uploaded_file is not None:
         with col2:
             y_col = st.selectbox("Dependent Variable (Y / Values)", cols)
 
-        # --- NEW: AUTOMATED NORMALITY CHECK ---
-        st.info("🔎 Automated Distribution Check (Normality)")
-        df_clean = df[[x_col, y_col]].dropna()
-        
-        # Only run if Y is numeric
-        if pd.api.types.is_numeric_dtype(df_clean[y_col]):
-            # Check if X is a grouping variable (few unique values)
-            is_grouping = df_clean[x_col].nunique() < 20
+        # --- NEW BUTTON: CHECK DISTRIBUTION ---
+        if st.button("Check Distribution Normality"):
+            st.divider()
+            st.info("🔎 Automated Distribution Check (Normality)")
+            df_clean = df[[x_col, y_col]].dropna()
             
-            if is_grouping:
-                st.write(f"Checking Normality of **{y_col}** within each group of **{x_col}**:")
-                normality_results = []
-                groups = df_clean[x_col].unique()
+            # --- MOVED: Group Summaries Table ---
+            # Logic: Display summary if X is categorical (few groups) and Y is numeric
+            if pd.api.types.is_numeric_dtype(df_clean[y_col]) and df_clean[x_col].nunique() < 20:
+                st.subheader("1. Group Summaries")
+                stats_df = df_clean.groupby(x_col)[y_col].agg(['count', 'mean', 'median', 'std', 'min', 'max'])
+                st.dataframe(stats_df.style.background_gradient(cmap='Blues', subset=['mean']), use_container_width=True)
+            
+            # --- Existing Normality Logic ---
+            st.subheader("2. Normality Tests")
+            # Only run if Y is numeric
+            if pd.api.types.is_numeric_dtype(df_clean[y_col]):
+                # Check if X is a grouping variable (few unique values)
+                is_grouping = df_clean[x_col].nunique() < 20
                 
-                for g in groups:
-                    group_data = df_clean[df_clean[x_col] == g][y_col]
-                    if len(group_data) >= 3: # Shapiro requires N >= 3
-                        stat, p = stats.shapiro(group_data)
-                        conclusion = "Normal ✅" if p > 0.05 else "Non-Normal ⚠️"
-                        normality_results.append({
-                            "Group": g, "N": len(group_data), 
-                            "P-Value": f"{p:.4f}", "Conclusion": conclusion
-                        })
-                
-                if normality_results:
-                    st.dataframe(pd.DataFrame(normality_results), use_container_width=True)
-                    if any("⚠️" in r['Conclusion'] for r in normality_results):
-                        st.warning("Recommendation: Data contains non-normal groups. Consider **Non-Parametric** tests (Mann-Whitney / Kruskal-Wallis).")
-                    else:
-                        st.success("Recommendation: Data looks Normal. You may use **Parametric** tests (T-Test / ANOVA).")
+                if is_grouping:
+                    st.write(f"Checking Normality of **{y_col}** within each group of **{x_col}**:")
+                    normality_results = []
+                    groups = df_clean[x_col].unique()
+                    
+                    for g in groups:
+                        group_data = df_clean[df_clean[x_col] == g][y_col]
+                        if len(group_data) >= 3: # Shapiro requires N >= 3
+                            stat, p = stats.shapiro(group_data)
+                            conclusion = "Normal ✅" if p > 0.05 else "Non-Normal ⚠️"
+                            normality_results.append({
+                                "Group": g, "N": len(group_data), 
+                                "P-Value": f"{p:.4f}", "Conclusion": conclusion
+                            })
+                    
+                    if normality_results:
+                        st.dataframe(pd.DataFrame(normality_results), use_container_width=True)
+                        if any("⚠️" in r['Conclusion'] for r in normality_results):
+                            st.warning("Recommendation: Data contains non-normal groups. Consider **Non-Parametric** tests (Mann-Whitney / Kruskal-Wallis).")
+                        else:
+                            st.success("Recommendation: Data looks Normal. You may use **Parametric** tests (T-Test / ANOVA).")
+                else:
+                    # Continuous X (Correlation)
+                    stat, p = stats.shapiro(df_clean[y_col])
+                    conclusion = "Normal ✅" if p > 0.05 else "Non-Normal ⚠️"
+                    st.metric(label=f"Normality of {y_col}", value=conclusion, delta=f"P={p:.4f}")
             else:
-                # Continuous X (Correlation)
-                stat, p = stats.shapiro(df_clean[y_col])
-                conclusion = "Normal ✅" if p > 0.05 else "Non-Normal ⚠️"
-                st.metric(label=f"Normality of {y_col}", value=conclusion, delta=f"P={p:.4f}")
-        else:
-            st.warning("Dependent variable is not numeric. Normality check skipped.")
-        
-        st.divider()
+                st.warning("Dependent variable is not numeric. Normality check skipped.")
+            st.divider()
 
         # C. Method Selection
         st.header("Step 3: Select Method")
@@ -175,17 +185,15 @@ if uploaded_file is not None:
             st.divider()
 
             # Data Prep
+            df_clean = df[[x_col, y_col]].dropna() # Ensure df_clean is available here too
             x_data = df_clean[x_col]
             y_data = df_clean[y_col]
 
-            # --- PART 1: DESCRIPTIVE STATISTICS ---
-            if method_key in ['anova', 'kruskal', 'ttest_ind', 'mannwhitney']:
-                st.subheader("1. Group Summaries")
-                stats_df = df_clean.groupby(x_col)[y_col].agg(['count', 'mean', 'median', 'std', 'min', 'max'])
-                st.dataframe(stats_df.style.background_gradient(cmap='Blues', subset=['mean']), use_container_width=True)
+            # --- PART 1: DESCRIPTIVE STATISTICS (REMOVED FROM HERE) ---
+            # Logic moved to Step 2 button above per request
 
             # --- PART 2: GLOBAL TEST & MAIN GRAPH ---
-            st.subheader("2. Global Test Result")
+            st.subheader("1. Global Test Result") # Renamed to 1 since Summary is gone
 
             # Logic: ANOVA / KRUSKAL
             if method_key in ['anova', 'kruskal']:
@@ -210,7 +218,7 @@ if uploaded_file is not None:
                 # --- PART 3: POST-HOC ANALYSIS (Finding Specific Differences) ---
                 if p < 0.05:
                     st.divider()
-                    st.subheader("3. Post-Hoc Analysis (Which groups differ?)")
+                    st.subheader("2. Post-Hoc Analysis (Which groups differ?)")
                     
                     # A. ANOVA -> TUKEY HSD
                     if method_key == 'anova':
