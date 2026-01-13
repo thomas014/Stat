@@ -11,57 +11,63 @@ import itertools
 st.set_page_config(page_title="Advanced Stat Tool", layout="centered")
 plt.style.use('seaborn-v0_8-whitegrid')
 
-# --- 2. ENHANCED KNOWLEDGE BASE ---
-# I have added technical fields: 'assumptions', 'null_hypo', 'alt_hypo'
+# --- 2. ENHANCED KNOWLEDGE BASE (Definitions & Rules) ---
 method_info = {
     'ttest_ind': {
         "name": "Independent T-Test",
-        "when": "Comparing averages of exactly 2 independent groups.",
+        "when": "Comparing averages of exactly 2 independent groups (e.g., Control vs Treatment).",
         "assumptions": "Normality (Shapiro > 0.05), Homogeneity of Variance (Levene > 0.05).",
         "null_hypo": "The means of the two groups are equal (µ1 = µ2).",
-        "interpret": "P < 0.05 rejects Null; groups are different."
+        "how": "Calculates the difference between group means relative to the variance.",
+        "interpret": "If P < 0.05, the difference is real and not due to chance."
     },
     'anova': {
         "name": "One-Way ANOVA",
-        "when": "Comparing averages of 3+ independent groups.",
+        "when": "Comparing averages of 3+ independent groups (e.g., Diet A vs B vs C).",
         "assumptions": "Normality (Residuals), Homogeneity of Variance (Levene > 0.05).",
         "null_hypo": "All group means are equal (µ1 = µ2 = µ3...).",
-        "interpret": "P < 0.05 suggests at least one group differs."
+        "how": "Analyzes variance 'between' groups vs 'within' groups (F-Statistic).",
+        "interpret": "If P < 0.05, at least one group is different. (Check the Pairwise table)."
     },
     'mannwhitney': {
         "name": "Mann-Whitney U",
-        "when": "Comparing 2 groups with skewed/non-normal data.",
+        "when": "Comparing 2 groups when data is NOT normal (skewed).",
         "assumptions": "Observations are independent; ordinal or continuous scale.",
         "null_hypo": "Distributions of both groups are equal.",
-        "interpret": "P < 0.05 suggests distributions differ (Median shift)."
+        "how": "Ranks values from low to high and compares sum of ranks.",
+        "interpret": "If P < 0.05, the distributions differ significantly."
     },
     'kruskal': {
         "name": "Kruskal-Wallis",
-        "when": "Comparing 3+ groups with skewed/non-normal data.",
+        "when": "Comparing 3+ groups when data is NOT normal (Non-parametric ANOVA).",
         "assumptions": "Independent samples; similar distribution shapes.",
         "null_hypo": "Population medians of all groups are equal.",
-        "interpret": "P < 0.05 suggests at least one group dominates."
+        "how": "Ranks data across all groups to see if one group consistently ranks higher.",
+        "interpret": "If P < 0.05, groups differ. (Check Pairwise table)."
     },
     'pearson': {
         "name": "Pearson Correlation",
-        "when": "Linear relationship between two continuous vars.",
+        "when": "Linear relationship between two continuous numbers.",
         "assumptions": "Linearity, Normality of variables, No outliers.",
         "null_hypo": "There is no linear correlation (r = 0).",
-        "interpret": "High 'r' + P < 0.05 -> Strong Linear trend."
+        "how": "Calculates 'r' coefficient (-1 to 1).",
+        "interpret": "High 'r' + P < 0.05 means a strong linear trend."
     },
     'spearman': {
         "name": "Spearman Correlation",
-        "when": "Monotonic/Ranked relationship.",
+        "when": "Ranked/Non-linear relationship between two variables.",
         "assumptions": "Monotonic relationship (doesn't need normality).",
         "null_hypo": "There is no monotonic correlation.",
-        "interpret": "High 'r' + P < 0.05 -> Strong Trend."
+        "how": "Converts values to ranks, then correlates the ranks.",
+        "interpret": "High 'r' + P < 0.05 means a strong monotonic trend."
     },
     'chi2': {
         "name": "Chi-Square Test",
-        "when": "Association between two Categorical variables.",
+        "when": "Checking association between two Categorical variables.",
         "assumptions": "Expected count > 5 in 80% of cells.",
         "null_hypo": "Variables are independent (No relationship).",
-        "interpret": "P < 0.05 -> Variables are dependent."
+        "how": "Compares Observed counts vs Expected counts.",
+        "interpret": "If P < 0.05, variables are related/dependent."
     }
 }
 
@@ -90,15 +96,13 @@ if uploaded_file is not None:
         with col2:
             y_col = st.selectbox("Dependent Variable (Y / Values)", cols)
 
-        # --- NEW SECTION: AUTOMATED DISTRIBUTION CHECK ---
-        # This runs immediately after variables are selected
+        # --- NEW: AUTOMATED NORMALITY CHECK ---
         st.info("🔎 Automated Distribution Check (Normality)")
-        
         df_clean = df[[x_col, y_col]].dropna()
         
-        # Check if Y is numeric (eligible for Normality check)
+        # Only run if Y is numeric
         if pd.api.types.is_numeric_dtype(df_clean[y_col]):
-            # 1. Check if X is likely Categorical (few unique values) or Continuous
+            # Check if X is a grouping variable (few unique values)
             is_grouping = df_clean[x_col].nunique() < 20
             
             if is_grouping:
@@ -108,40 +112,29 @@ if uploaded_file is not None:
                 
                 for g in groups:
                     group_data = df_clean[df_clean[x_col] == g][y_col]
-                    # Shapiro-Wilk requires N >= 3
-                    if len(group_data) >= 3:
+                    if len(group_data) >= 3: # Shapiro requires N >= 3
                         stat, p = stats.shapiro(group_data)
-                        # Interpretation logic
                         conclusion = "Normal ✅" if p > 0.05 else "Non-Normal ⚠️"
                         normality_results.append({
-                            "Group": g, 
-                            "N": len(group_data), 
-                            "Shapiro P-Val": f"{p:.4f}", 
-                            "Conclusion": conclusion
+                            "Group": g, "N": len(group_data), 
+                            "P-Value": f"{p:.4f}", "Conclusion": conclusion
                         })
                 
-                # Display Results in a small table
                 if normality_results:
                     st.dataframe(pd.DataFrame(normality_results), use_container_width=True)
-                    
-                    # Logic check for recommendation
-                    non_normal_count = sum(1 for r in normality_results if "⚠️" in r['Conclusion'])
-                    if non_normal_count > 0:
-                        st.markdown("**Recommendation:** Data contains non-normal groups. Consider **Non-Parametric** tests (Mann-Whitney / Kruskal-Wallis).")
+                    if any("⚠️" in r['Conclusion'] for r in normality_results):
+                        st.warning("Recommendation: Data contains non-normal groups. Consider **Non-Parametric** tests (Mann-Whitney / Kruskal-Wallis).")
                     else:
-                        st.markdown("**Recommendation:** Data looks Normal. You may use **Parametric** tests (T-Test / ANOVA).")
-            
+                        st.success("Recommendation: Data looks Normal. You may use **Parametric** tests (T-Test / ANOVA).")
             else:
-                # X is likely continuous (Correlation scenario)
+                # Continuous X (Correlation)
                 stat, p = stats.shapiro(df_clean[y_col])
                 conclusion = "Normal ✅" if p > 0.05 else "Non-Normal ⚠️"
-                st.metric(label=f"Normality of {y_col} (Global)", value=conclusion, delta=f"P={p:.4f}")
-        
+                st.metric(label=f"Normality of {y_col}", value=conclusion, delta=f"P={p:.4f}")
         else:
             st.warning("Dependent variable is not numeric. Normality check skipped.")
         
         st.divider()
-        # ----------------------------------------------------------
 
         # C. Method Selection
         st.header("Step 3: Select Method")
@@ -160,42 +153,39 @@ if uploaded_file is not None:
         method_key = method_map[selected_label]
         info = method_info[method_key]
 
+        # EDUCATIONAL EXPANDER (Explanation Details)
+        with st.expander(f"📘 Method Guide: {info['name']} (Click to Expand)", expanded=False):
+            st.markdown(f"**When to use:** {info['when']}")
+            st.markdown(f"**How it works:** {info['how']}")
+            st.markdown(f"**Interpretation:** {info['interpret']}")
+
         # --- E. RUN ANALYSIS ---
         if st.button("Run Analysis", type="primary"):
             st.divider()
             st.header(f"🚀 Results: {info['name']}")
             
-            # --- NEW SECTION: REFERENCE TABLE (Requested by User) ---
+            # --- NEW: REFERENCE TABLE (Data Scientist Info) ---
             st.subheader("📋 Method Reference Card")
-            
-            # Create a clean 1-row DataFrame for display
             ref_data = {
                 "Null Hypothesis (H0)": [info['null_hypo']],
                 "Key Assumptions": [info['assumptions']],
                 "Interpretation Rule": [info['interpret']]
             }
-            ref_df = pd.DataFrame(ref_data)
-            
-            # Display as a static table
-            st.table(ref_df)
+            st.table(pd.DataFrame(ref_data))
             st.divider()
-            # --------------------------------------------------------
 
-            # Data Prep (re-running locally for scope)
+            # Data Prep
             x_data = df_clean[x_col]
             y_data = df_clean[y_col]
 
-            # ... [EXISTING ANALYSIS CODE REMAINS UNCHANGED BELOW] ...
-            # (Pasting the logic logic from previous code for continuity)
-            
             # --- PART 1: DESCRIPTIVE STATISTICS ---
             if method_key in ['anova', 'kruskal', 'ttest_ind', 'mannwhitney']:
                 st.subheader("1. Group Summaries")
-                stats_df = df_clean.groupby(x_col)[y_col].agg(['count', 'mean', 'median', 'std'])
+                stats_df = df_clean.groupby(x_col)[y_col].agg(['count', 'mean', 'median', 'std', 'min', 'max'])
                 st.dataframe(stats_df.style.background_gradient(cmap='Blues', subset=['mean']), use_container_width=True)
 
-            # --- PART 2: GLOBAL TEST ---
-            st.subheader("2. Test Results & Graphs")
+            # --- PART 2: GLOBAL TEST & MAIN GRAPH ---
+            st.subheader("2. Global Test Result")
 
             # Logic: ANOVA / KRUSKAL
             if method_key in ['anova', 'kruskal']:
@@ -209,6 +199,7 @@ if uploaded_file is not None:
                 c1, c2, c3 = st.columns(3)
                 c1.metric("Statistic", f"{stat:.4f}")
                 c2.metric("P-Value", f"{p:.4e}")
+                
                 if p < 0.05: c3.success("Significant Difference (Reject H0)")
                 else: c3.warning("No Difference (Fail to Reject H0)")
                 
@@ -216,17 +207,57 @@ if uploaded_file is not None:
                 sns.boxplot(x=x_col, y=y_col, data=df_clean, hue=x_col, palette="viridis", legend=False, ax=ax)
                 st.pyplot(fig)
 
-                # POST HOC (Simplified for brevity in this snippet)
-                if p < 0.05 and method_key == 'anova':
-                     st.write("**Post-Hoc:** Running Tukey's HSD...")
-                     tukey = pairwise_tukeyhsd(endog=y_data, groups=x_data, alpha=0.05)
-                     st.pyplot(tukey.plot_simultaneous())
+                # --- PART 3: POST-HOC ANALYSIS (Finding Specific Differences) ---
+                if p < 0.05:
+                    st.divider()
+                    st.subheader("3. Post-Hoc Analysis (Which groups differ?)")
+                    
+                    # A. ANOVA -> TUKEY HSD
+                    if method_key == 'anova':
+                        st.write("**Method:** Tukey's HSD (Honest Significant Difference)")
+                        tukey = pairwise_tukeyhsd(endog=y_data, groups=x_data, alpha=0.05)
+                        tukey_df = pd.DataFrame(data=tukey._results_table.data[1:], columns=tukey._results_table.data[0])
+                        
+                        # Highlight True Rejections
+                        st.dataframe(tukey_df.style.apply(lambda x: ['background-color: #d4edda' if x['reject'] else '' for i in x], axis=1))
+                        
+                        st.caption("Graph: Groups with overlapping confidence intervals are similar.")
+                        fig = tukey.plot_simultaneous(figsize=(8, 4))
+                        st.pyplot(fig)
+
+                    # B. KRUSKAL -> PAIRWISE MANN-WHITNEY
+                    else:
+                        st.write("**Method:** Pairwise Mann-Whitney U with Bonferroni Correction")
+                        unique_groups = x_data.unique()
+                        pairs = list(itertools.combinations(unique_groups, 2))
+                        corr_alpha = 0.05 / len(pairs)
+                        
+                        results = []
+                        p_matrix = pd.DataFrame(index=unique_groups, columns=unique_groups, dtype=float)
+
+                        for g1, g2 in pairs:
+                            u_stat, u_p = stats.mannwhitneyu(y_data[x_data==g1], y_data[x_data==g2])
+                            sig = u_p < corr_alpha
+                            results.append([g1, g2, u_p, sig])
+                            p_matrix.at[g1, g2] = u_p
+                            p_matrix.at[g2, g1] = u_p
+                        
+                        res_df = pd.DataFrame(results, columns=['Group 1', 'Group 2', 'P-Value', 'Significant?'])
+                        st.dataframe(res_df.style.apply(lambda x: ['background-color: #d4edda' if x['Significant?'] else '' for i in x], axis=1))
+                        st.caption(f"Bonferroni Corrected Alpha: {corr_alpha:.4f}")
+                        
+                        # Heatmap
+                        st.caption("Heatmap: Red = Different, Blue = Similar")
+                        fig, ax = plt.subplots(figsize=(6, 5))
+                        p_matrix.fillna(1.0, inplace=True)
+                        sns.heatmap(p_matrix, annot=True, cmap="coolwarm_r", vmin=0, vmax=0.05, ax=ax)
+                        st.pyplot(fig)
 
             # Logic: T-TEST / MANN-WHITNEY
             elif method_key in ['ttest_ind', 'mannwhitney']:
                 groups = x_data.unique()
                 if len(groups) != 2:
-                    st.error("Error: Need exactly 2 groups.")
+                    st.error(f"Error: Independent variable must have exactly 2 groups. Found {len(groups)}.")
                 else:
                     g1 = y_data[x_data == groups[0]]
                     g2 = y_data[x_data == groups[1]]
@@ -234,10 +265,11 @@ if uploaded_file is not None:
                     if method_key == 'ttest_ind': stat, p = stats.ttest_ind(g1, g2)
                     else: stat, p = stats.mannwhitneyu(g1, g2)
                     
-                    c1, c2 = st.columns(2)
-                    c1.metric("P-Value", f"{p:.4e}")
-                    if p < 0.05: c2.success("Significant")
-                    else: c2.warning("Not Significant")
+                    c1, c2, c3 = st.columns(3)
+                    c1.metric("Statistic", f"{stat:.4f}")
+                    c2.metric("P-Value", f"{p:.4e}")
+                    if p < 0.05: c3.success("Significant Difference")
+                    else: c3.warning("No Difference")
                     
                     fig, ax = plt.subplots(figsize=(8, 4))
                     sns.boxplot(x=x_col, y=y_col, data=df_clean, hue=x_col, palette="Set2", legend=False, ax=ax)
@@ -249,16 +281,22 @@ if uploaded_file is not None:
                     ct = pd.crosstab(x_data, y_data)
                     stat, p, _, _ = stats.chi2_contingency(ct)
                     st.metric("P-Value", f"{p:.4e}")
+                    
                     fig, ax = plt.subplots()
                     sns.heatmap(ct, annot=True, fmt='d', cmap="Blues", ax=ax)
                     st.pyplot(fig)
                 else:
                     if method_key == 'pearson': stat, p = stats.pearsonr(x_data, y_data)
                     else: stat, p = stats.spearmanr(x_data, y_data)
-                    st.metric("Correlation (r)", f"{stat:.4f}", delta=f"P={p:.4e}")
+                    
+                    st.metric(f"Correlation (r)", f"{stat:.4f}", delta=f"P-Value: {p:.4e}")
+                    
                     fig, ax = plt.subplots()
                     sns.regplot(x=x_col, y=y_col, data=df_clean, line_kws={'color':'red'}, ax=ax)
                     st.pyplot(fig)
 
     except Exception as e:
-        st.error(f"Error: {e}")
+        st.error(f"Error loading file: {e}")
+
+else:
+    st.info("Please upload a CSV or Excel file to begin.")
