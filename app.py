@@ -23,17 +23,25 @@ method_info = {
     },
     'wilcoxon': {
         "name": "Wilcoxon Signed-Rank (vs Constant)",
-        "when": "Comparing the MEDIAN of a group against a Reference Value (Non-Normal Data).",
+        "when": "Comparing the MEDIAN of a group against a Reference Value (Symmetric Non-Normal).",
         "assumptions": "Symmetric distribution (does not need normality).",
         "min_size": "Min N=5. (No Max).",
         "null_hypo": "The group median equals the Reference Value.",
+        "interpret": "If P < 0.05, the median differs from Reference."
+    },
+    'signtest': { ### NEW METHOD ###
+        "name": "Sign Test (vs Constant)",
+        "when": "Comparing the MEDIAN of a group against a Reference Value (Skewed/Asymmetric Data).",
+        "assumptions": "Independent observations. Data is at least ordinal.",
+        "min_size": "Min N=5. (No Max).",
+        "null_hypo": "The median of differences is zero (Equal pos/neg deviations).",
         "interpret": "If P < 0.05, the median differs from Reference."
     },
     'ttest_ind': {
         "name": "Independent T-Test (2 Groups)",
         "when": "Comparing averages of exactly 2 independent groups.",
         "assumptions": "Normality, Homogeneity of Variance.",
-        "min_size": "Min N=2/group. (No Max, but check effect size if N is huge).",
+        "min_size": "Min N=2/group. (No Max).",
         "null_hypo": "The means of the two groups are equal.",
         "interpret": "If P < 0.05, the difference is real."
     },
@@ -184,6 +192,7 @@ if uploaded_file is not None:
         method_map = {
             "One-Sample T-Test (Compare Mean vs Ref)": "ttest_1samp",
             "Wilcoxon Signed-Rank (Compare Median vs Ref)": "wilcoxon",
+            "Sign Test (Compare Median vs Ref - Skewed)": "signtest", ### NEW MAP OPTION ###
             "Independent T-Test (2 Groups)": "ttest_ind",
             "One-Way ANOVA (3+ Groups)": "anova",
             "Mann-Whitney U (Non-Parametric 2 Groups)": "mannwhitney",
@@ -198,11 +207,10 @@ if uploaded_file is not None:
         info = method_info[method_key]
 
         ref_value = 0.0
-        if method_key in ['ttest_1samp', 'wilcoxon']:
+        if method_key in ['ttest_1samp', 'wilcoxon', 'signtest']: ### UPDATED CONDITION ###
             st.info("ℹ️ This test compares your data against a fixed Reference number.")
             ref_value = st.number_input("Enter Reference Value:", value=0.0)
 
-        # --- UPDATED METHOD GUIDE ---
         with st.expander(f"📘 Method Guide: {info['name']}", expanded=False):
             st.markdown(f"**When to use:** {info['when']}")
             st.markdown(f"**Assumptions:** {info['assumptions']}")
@@ -214,7 +222,6 @@ if uploaded_file is not None:
             st.divider()
             st.header(f"🚀 Results: {info['name']}")
             
-            # Ref Card still displayed for easy printing/copying
             ref_data = {
                 "Null Hypothesis": [info['null_hypo']],
                 "Assumptions": [info['assumptions']],
@@ -232,8 +239,8 @@ if uploaded_file is not None:
 
             st.subheader("1. Test Results")
 
-            # --- ONE-SAMPLE ---
-            if method_key in ['ttest_1samp', 'wilcoxon']:
+            # --- ONE-SAMPLE TESTS (T-TEST, WILCOXON, SIGN) ---
+            if method_key in ['ttest_1samp', 'wilcoxon', 'signtest']:
                 st.write(f"Testing against Reference Value: **{ref_value}**")
                 results = []
                 groups = x_data.unique()
@@ -243,14 +250,31 @@ if uploaded_file is not None:
                     if method_key == 'ttest_1samp':
                         stat, p_val = stats.ttest_1samp(g_data, popmean=ref_value)
                         metric_name, metric_val = "Mean", g_data.mean()
-                    else:
+                    elif method_key == 'wilcoxon':
                         stat, p_val = stats.wilcoxon(g_data - ref_value)
                         metric_name, metric_val = "Median", g_data.median()
-                    
+                    else: # SIGN TEST
+                        diffs = g_data - ref_value
+                        pos = np.sum(diffs > 0)
+                        neg = np.sum(diffs < 0)
+                        n_valid = pos + neg # Ties (0) are ignored
+                        
+                        if n_valid == 0: 
+                            p_val = 1.0 # Exact match
+                        else:
+                            # Use Binomial Test for exact P-value
+                            res = stats.binomtest(k=pos, n=n_valid, p=0.5, alternative='two-sided')
+                            p_val = res.pvalue
+                        
+                        metric_name, metric_val = "Median", g_data.median()
+
                     sig = "Significant 💥" if p_val < 0.05 else "Not Sig"
+                    diff = metric_val - ref_value
+                    
                     results.append({
                         "Group": g, "N": len(g_data),
                         f"{metric_name}": f"{metric_val:.2f}",
+                        "Diff": f"{diff:.2f}",
                         "P-Value": f"{p_val:.4e}", "Result": sig
                     })
                 
