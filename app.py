@@ -128,8 +128,9 @@ if uploaded_file is not None:
             # 1. Group Summaries
             if pd.api.types.is_numeric_dtype(df_clean[y_col]) and df_clean[x_col].nunique() < 20:
                 st.subheader("1. Group Summaries")
-                stats_df = df_clean.groupby(x_col)[y_col].agg(['count', 'mean', 'std', 'min', 'max'])
-                st.dataframe(stats_df.style.background_gradient(cmap='Blues', subset=['mean']), use_container_width=True)
+                # Added 'median' to the aggregation and included in styling
+                stats_df = df_clean.groupby(x_col)[y_col].agg(['count', 'mean', 'median', 'std', 'min', 'max'])
+                st.dataframe(stats_df.style.background_gradient(cmap='Blues', subset=['mean', 'median']), use_container_width=True)
             
             # 2. Normality Tests & HISTOGRAM
             st.subheader("2. Normality Tests & Visualization")
