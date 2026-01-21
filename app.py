@@ -332,7 +332,15 @@ if uploaded_file is not None:
                 log_step("Normality", f"Normality checks completed for {len(normality_results)} group(s)", value=pd.DataFrame(normality_results))
 
                 st.dataframe(pd.DataFrame(normality_results), hide_index=True)
-                st.caption("Normality method adapts to sample size: Shapiro-Wilk (N<50), Lilliefors (50-300), Skew/Kurtosis (N>300).")
+                    st.caption("Normality method adapts to sample size: Shapiro-Wilk (N<50), Lilliefors (50-300), Skew/Kurtosis (N>300).")
+                    st.markdown(
+                        """
+**Thresholds for Normality (How to read the results):**
+- **Small Samples (n < 50):** If the Z-score is between -1.96 and +1.96, the data is normal.
+- **Medium Samples (50 < n < 300):** If the Z-score is between -3.29 and +3.29, the data is normal.
+- **Large Samples (n > 300):** Look at absolute skewness rather than Z-score. If |skewness| < 2.0 and |kurtosis| < 7.0, the data is likely normal enough for parametric tests.
+                        """
+                    )
 
                 st.write("**Distribution Visualizer:**")
                 if is_grouping:
