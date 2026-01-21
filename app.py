@@ -286,10 +286,15 @@ if uploaded_file is not None:
 
                     skew = stats.skew(data, bias=False)
                     kurt = stats.kurtosis(data, fisher=True, bias=False)
-                    se_skew = np.sqrt(6 / N) if N > 2 else np.nan
-                    se_kurt = np.sqrt(24 / N) if N > 3 else np.nan
-                    z_skew = skew / se_skew if se_skew and np.isfinite(se_skew) else np.nan
-                    z_kurt = kurt / se_kurt if se_kurt and np.isfinite(se_kurt) else np.nan
+                    # SPSS/SAS standard errors for skewness and kurtosis
+                    if N > 3:
+                        se_skew = np.sqrt((6 * N * (N - 1)) / ((N - 2) * (N + 1) * (N + 3)))
+                        se_kurt = 2 * se_skew * np.sqrt((N**2 - 1) / ((N - 3) * (N + 5)))
+                    else:
+                        se_skew = np.nan
+                        se_kurt = np.nan
+                    z_skew = skew / se_skew if np.isfinite(se_skew) and se_skew != 0 else np.nan
+                    z_kurt = kurt / se_kurt if np.isfinite(se_kurt) and se_kurt != 0 else np.nan
 
                     if N < 50:
                         stat, p = stats.shapiro(data)
@@ -519,16 +524,19 @@ if uploaded_file is not None:
                     else:
                         unique_groups = x_data.unique()
                         pairs = list(itertools.combinations(unique_groups, 2))
+                        num_pairs = len(pairs)
                         p_matrix = pd.DataFrame(index=unique_groups, columns=unique_groups, dtype=float)
                         for g1, g2 in pairs:
                             _, u_p = stats.mannwhitneyu(y_data[x_data==g1], y_data[x_data==g2])
-                            p_matrix.at[g1, g2] = u_p
-                            p_matrix.at[g2, g1] = u_p
+                            u_p_adjusted = min(u_p * num_pairs, 1.0)
+                            p_matrix.at[g1, g2] = u_p_adjusted
+                            p_matrix.at[g2, g1] = u_p_adjusted
                         p_matrix.fillna(1.0, inplace=True)
+                        st.write(f"**Note:** P-values are Bonferroni-corrected for {num_pairs} comparisons.")
                         fig, ax = plt.subplots()
                         sns.heatmap(p_matrix, annot=True, cmap="coolwarm_r", vmin=0, vmax=0.05, ax=ax)
                         st.pyplot(fig)
-                        log_step("Post-Hoc", "Pairwise Mann-Whitney U computed", value=p_matrix)
+                        log_step("Post-Hoc", f"Pairwise Mann-Whitney U computed (Bonferroni n={num_pairs})", value=p_matrix)
 
             # --- T-TEST / MANN-WHITNEY ---
             elif method_key in ['ttest_ind', 'mannwhitney']:
