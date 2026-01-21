@@ -252,114 +252,115 @@ if uploaded_file is not None:
             st.subheader("2. Normality Tests & Visualization")
             if pd.api.types.is_numeric_dtype(df_clean[y_col]):
                 is_grouping = df_clean[x_col].nunique() < 20
-                
-                c_vis1, c_vis2 = st.columns([1, 2])
-                with c_vis1:
-                    st.write("**Normality Statistics:**")
-                    normality_results = []
-                    
-                    def check_normality(data, name):
-                        N = len(data)
-                        if N < 3:
-                            return {
-                                "Group": name,
-                                "N": N,
-                                "Test": "Too Small",
-                                "P-Val": "-",
-                                "Res": "Unknown",
-                                "Skew": "-",
-                                "Kurtosis": "-",
-                                "Z-Skew": "-",
-                                "Z-Kurt": "-",
-                            }
 
-                        if np.isclose(np.std(data, ddof=1), 0.0, atol=1e-12):
-                            return {
-                                "Group": name,
-                                "N": N,
-                                "Test": "Constant",
-                                "P-Val": "-",
-                                "Res": "Unknown",
-                                "Skew": "0.000",
-                                "Kurtosis": "0.000",
-                                "Z-Skew": "-",
-                                "Z-Kurt": "-",
-                            }
+                st.write("**Normality Statistics:**")
+                normality_results = []
 
-                        skew = stats.skew(data, bias=False)
-                        kurt = stats.kurtosis(data, fisher=True, bias=False)
-                        se_skew = np.sqrt(6 / N) if N > 2 else np.nan
-                        se_kurt = np.sqrt(24 / N) if N > 3 else np.nan
-                        z_skew = skew / se_skew if se_skew and np.isfinite(se_skew) else np.nan
-                        z_kurt = kurt / se_kurt if se_kurt and np.isfinite(se_kurt) else np.nan
-
-                        if N < 50:
-                            stat, p = stats.shapiro(data)
-                            z_ok = (abs(z_skew) <= 1.96) and (abs(z_kurt) <= 1.96)
-                            conclusion = "Normal ✅" if (p > 0.05 and z_ok) else "Non-Normal ⚠️"
-                            test_name = "Shapiro-Wilk"
-                            p_val = f"{p:.4f}"
-                        elif N <= 300:
-                            stat, p = lilliefors(data, dist="norm")
-                            z_ok = (abs(z_skew) <= 3.29) and (abs(z_kurt) <= 3.29)
-                            conclusion = "Normal ✅" if (p > 0.05 and z_ok) else "Non-Normal ⚠️"
-                            test_name = "Lilliefors (KS adj.)"
-                            p_val = f"{p:.4f}"
-                        else:
-                            normal_enough = (abs(skew) < 2.0) and (abs(kurt) < 7.0)
-                            conclusion = "Normal ✅" if normal_enough else "Non-Normal ⚠️"
-                            test_name = "Skew/Kurtosis"
-                            p_val = "-"
-
+                def check_normality(data, name):
+                    N = len(data)
+                    if N < 3:
                         return {
                             "Group": name,
                             "N": N,
-                            "Test": test_name,
-                            "P-Val": p_val,
-                            "Res": conclusion,
-                            "Skew": f"{skew:.3f}",
-                            "Kurtosis": f"{kurt:.3f}",
-                            "Z-Skew": f"{z_skew:.3f}" if np.isfinite(z_skew) else "-",
-                            "Z-Kurt": f"{z_kurt:.3f}" if np.isfinite(z_kurt) else "-",
+                            "Test": "Too Small",
+                            "P-Val": "-",
+                            "Res": "Unknown",
+                            "Skew": "-",
+                            "Kurtosis": "-",
+                            "Z-Skew": "-",
+                            "Z-Kurt": "-",
                         }
 
-                    if is_grouping:
-                        groups = df_clean[x_col].unique()
-                        for g in groups:
-                            group_data = df_clean[df_clean[x_col] == g][y_col]
-                            normality_results.append(check_normality(group_data, g))
-                    else:
-                        normality_results.append(check_normality(df_clean[y_col], "Global"))
+                    if np.isclose(np.std(data, ddof=1), 0.0, atol=1e-12):
+                        return {
+                            "Group": name,
+                            "N": N,
+                            "Test": "Constant",
+                            "P-Val": "-",
+                            "Res": "Unknown",
+                            "Skew": "0.000",
+                            "Kurtosis": "0.000",
+                            "Z-Skew": "-",
+                            "Z-Kurt": "-",
+                        }
 
-                    log_step("Normality", f"Normality checks completed for {len(normality_results)} group(s)", value=pd.DataFrame(normality_results))
-                        
-                    st.dataframe(pd.DataFrame(normality_results), hide_index=True)
-                    st.caption("Normality method adapts to sample size: Shapiro-Wilk (N<50), Lilliefors (50-300), Skew/Kurtosis (N>300).")
+                    skew = stats.skew(data, bias=False)
+                    kurt = stats.kurtosis(data, fisher=True, bias=False)
+                    se_skew = np.sqrt(6 / N) if N > 2 else np.nan
+                    se_kurt = np.sqrt(24 / N) if N > 3 else np.nan
+                    z_skew = skew / se_skew if se_skew and np.isfinite(se_skew) else np.nan
+                    z_kurt = kurt / se_kurt if se_kurt and np.isfinite(se_kurt) else np.nan
+
+                    if N < 50:
+                        stat, p = stats.shapiro(data)
+                        z_ok = (abs(z_skew) <= 1.96) and (abs(z_kurt) <= 1.96)
+                        conclusion = "Normal ✅" if (p > 0.05 and z_ok) else "Non-Normal ⚠️"
+                        test_name = "Shapiro-Wilk"
+                        p_val = f"{p:.4f}"
+                    elif N <= 300:
+                        stat, p = lilliefors(data, dist="norm")
+                        z_ok = (abs(z_skew) <= 3.29) and (abs(z_kurt) <= 3.29)
+                        conclusion = "Normal ✅" if (p > 0.05 and z_ok) else "Non-Normal ⚠️"
+                        test_name = "Lilliefors (KS adj.)"
+                        p_val = f"{p:.4f}"
+                    else:
+                        normal_enough = (abs(skew) < 2.0) and (abs(kurt) < 7.0)
+                        conclusion = "Normal ✅" if normal_enough else "Non-Normal ⚠️"
+                        test_name = "Skew/Kurtosis"
+                        p_val = "-"
+
+                    return {
+                        "Group": name,
+                        "N": N,
+                        "Test": test_name,
+                        "P-Val": p_val,
+                        "Res": conclusion,
+                        "Skew": f"{skew:.3f}",
+                        "Kurtosis": f"{kurt:.3f}",
+                        "Z-Skew": f"{z_skew:.3f}" if np.isfinite(z_skew) else "-",
+                        "Z-Kurt": f"{z_kurt:.3f}" if np.isfinite(z_kurt) else "-",
+                    }
+
+                if is_grouping:
+                    groups = df_clean[x_col].unique()
+                    for g in groups:
+                        group_data = df_clean[df_clean[x_col] == g][y_col]
+                        normality_results.append(check_normality(group_data, g))
+                else:
+                    normality_results.append(check_normality(df_clean[y_col], "Global"))
+
+                log_step("Normality", f"Normality checks completed for {len(normality_results)} group(s)", value=pd.DataFrame(normality_results))
+
+                st.dataframe(pd.DataFrame(normality_results), hide_index=True)
+                st.caption("Normality method adapts to sample size: Shapiro-Wilk (N<50), Lilliefors (50-300), Skew/Kurtosis (N>300).")
+
+                st.write("**Distribution Visualizer:**")
+                if is_grouping:
+                    target_group = st.selectbox("Select Group to Visualize:", df_clean[x_col].unique())
+                    viz_data = df_clean[df_clean[x_col] == target_group][y_col]
+                else:
+                    viz_data = df_clean[y_col]
+
+                c_vis1, c_vis2 = st.columns(2)
+                with c_vis1:
+                    fig, ax = plt.subplots(figsize=(6, 3))
+                    sns.histplot(viz_data, kde=True, stat="density", color="skyblue", alpha=0.6, ax=ax)
+                    xmin, xmax = ax.get_xlim()
+                    x = np.linspace(xmin, xmax, 100)
+                    p = stats.norm.pdf(x, viz_data.mean(), viz_data.std())
+                    ax.plot(x, p, 'r', linewidth=2, label='Normal Dist')
+                    ax.legend()
+                    ax.set_title("Histogram")
+                    st.pyplot(fig)
 
                 with c_vis2:
-                    st.write("**Distribution Visualizer:**")
-                    viz_mode = st.radio("Plot type", ["Histogram", "Q-Q Plot"], horizontal=True)
-                    if is_grouping:
-                        target_group = st.selectbox("Select Group to Visualize:", df_clean[x_col].unique())
-                        viz_data = df_clean[df_clean[x_col] == target_group][y_col]
-                    else:
-                        viz_data = df_clean[y_col]
-
                     fig, ax = plt.subplots(figsize=(6, 3))
-                    if viz_mode == "Histogram":
-                        sns.histplot(viz_data, kde=True, stat="density", color="skyblue", alpha=0.6, ax=ax)
-                        xmin, xmax = ax.get_xlim()
-                        x = np.linspace(xmin, xmax, 100)
-                        p = stats.norm.pdf(x, viz_data.mean(), viz_data.std())
-                        ax.plot(x, p, 'r', linewidth=2, label='Normal Dist')
-                        ax.legend()
-                    else:
-                        stats.probplot(viz_data, dist="norm", plot=ax)
-                        ax.set_title("Q-Q Plot")
+                    stats.probplot(viz_data, dist="norm", plot=ax)
+                    ax.set_title("Q-Q Plot")
                     st.pyplot(fig)
             else:
                 st.warning("Dependent variable is not numeric. Normality check skipped.")
-
+                
         # C. Method Selection
         st.header("Step 3: Select Method")
         
