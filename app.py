@@ -5,6 +5,7 @@ import scipy.stats as stats
 import matplotlib.pyplot as plt
 import seaborn as sns
 from statsmodels.stats.multicomp import pairwise_tukeyhsd
+from statsmodels.stats.diagnostic import lilliefors
 import itertools
 
 # --- 1. CONFIGURATION & STYLING ---
@@ -99,6 +100,115 @@ method_info = {
 st.title("📊 Advanced Statistical Analysis Tool")
 st.markdown("---")
 
+# --- 3A. CALCULATION DETAILS PANEL (RIGHT SIDE) ---
+if "show_calc_panel" not in st.session_state:
+    st.session_state.show_calc_panel = True
+if "calc_logs" not in st.session_state:
+    st.session_state.calc_logs = []
+
+def _format_calc_value(value, max_rows=20, max_chars=1200):
+    if value is None:
+        return None
+    try:
+        if isinstance(value, (np.ndarray, list, tuple)):
+            arr = np.array(value)
+            text = np.array2string(arr, max_line_width=120, threshold=200)
+        elif isinstance(value, pd.Series):
+            text = value.head(max_rows).to_string()
+        elif isinstance(value, pd.DataFrame):
+            text = value.head(max_rows).to_string()
+        else:
+            text = str(value)
+        if len(text) > max_chars:
+            text = text[:max_chars] + "\n... (truncated)"
+        return text
+    except Exception:
+        return str(value)
+
+def log_step(section, message, level="info", value=None):
+    st.session_state.calc_logs.append(
+        {
+            "section": section,
+            "message": message,
+            "level": level,
+            "value": _format_calc_value(value),
+        }
+    )
+
+def render_calc_panel():
+    logs = st.session_state.calc_logs
+    if not logs:
+        content = "<p>No calculations yet.</p>"
+    else:
+        sections = {}
+        for entry in logs:
+            sections.setdefault(entry["section"], []).append(entry)
+        content = ""
+        for section, entries in sections.items():
+            content += f"<h4>{section}</h4><ul>"
+            for e in entries:
+                cls = "calc-log-error" if e["level"] == "error" else "calc-log-info"
+                content += f"<li class='{cls}'>{e['message']}"
+                if e.get("value"):
+                    content += f"<pre class='calc-log-data'>{e['value']}</pre>"
+                content += "</li>"
+            content += "</ul>"
+    st.markdown(
+        f"""
+        <div id="calc-panel">
+            <div class="calc-panel-header">Calculation Details</div>
+            {content}
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+st.markdown(
+    """
+    <style>
+    #calc-panel {
+        position: fixed;
+        top: 90px;
+        right: 12px;
+        width: 340px;
+        max-height: 80vh;
+        overflow-y: auto;
+        background: #ffffff;
+        border: 1px solid #e5e7eb;
+        padding: 12px 14px;
+        box-shadow: 0 8px 24px rgba(0,0,0,0.12);
+        border-radius: 10px;
+        z-index: 9999;
+    }
+    .calc-panel-header {
+        font-weight: 700;
+        font-size: 16px;
+        margin-bottom: 8px;
+        border-bottom: 1px solid #f0f0f0;
+        padding-bottom: 6px;
+    }
+    #calc-panel, #calc-panel * { color: #000000; }
+    .calc-log-info { color: #000000; }
+    .calc-log-error { color: #b91c1c; font-weight: 600; }
+    .calc-log-data {
+        background: #f8fafc;
+        border: 1px solid #e5e7eb;
+        padding: 6px 8px;
+        border-radius: 6px;
+        margin-top: 6px;
+        white-space: pre-wrap;
+        font-size: 12px;
+    }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
+
+with st.expander("🧾 Calculation Details (Toggle)", expanded=st.session_state.show_calc_panel):
+    st.toggle("Show calculation details", key="show_calc_panel")
+    if st.session_state.show_calc_panel:
+        render_calc_panel()
+
 # A. File Upload
 st.header("Step 1: Upload Data")
 uploaded_file = st.file_uploader("Upload CSV or Excel", type=['csv', 'xlsx'])
@@ -120,10 +230,15 @@ if uploaded_file is not None:
         with col2:
             y_col = st.selectbox("Dependent Variable (Y / Values)", cols)
 
+        log_step("Inputs", f"Selected X column: {x_col}")
+        log_step("Inputs", f"Selected Y column: {y_col}")
+
         # --- REACTIVE ANALYSIS: DISTRIBUTION & NORMALITY ---
         st.divider()
         with st.expander("🔎 Data Distribution & Normality Check", expanded=True):
             df_clean = df[[x_col, y_col]].dropna()
+            log_step("Data Prep", f"Rows after dropna: {len(df_clean)}")
+            log_step("Data Prep", "Preview (head)", value=df_clean.head(10))
             
             # 1. Group Summaries
             if pd.api.types.is_numeric_dtype(df_clean[y_col]) and df_clean[x_col].nunique() < 20:
@@ -131,6 +246,7 @@ if uploaded_file is not None:
                 # Added 'median' to the aggregation and included in styling
                 stats_df = df_clean.groupby(x_col)[y_col].agg(['count', 'mean', 'median', 'std', 'min', 'max'])
                 st.dataframe(stats_df.style.background_gradient(cmap='Blues', subset=['mean', 'median']), use_container_width=True)
+                log_step("Group Summaries", "Computed count/mean/median/std/min/max by group", value=stats_df)
             
             # 2. Normality Tests & HISTOGRAM
             st.subheader("2. Normality Tests & Visualization")
@@ -145,17 +261,67 @@ if uploaded_file is not None:
                     def check_normality(data, name):
                         N = len(data)
                         if N < 3:
-                            return {"Group": name, "N": N, "Test": "Too Small", "P-Val": "-", "Res": "Unknown"}
-                        elif N > 5000:
-                            result = stats.anderson(data, dist='norm')
-                            stat = result.statistic
-                            crit = result.critical_values[2] 
-                            conclusion = "Normal ✅" if stat < crit else "Non-Normal ⚠️"
-                            return {"Group": name, "N": N, "Test": "Anderson (Large N)", "P-Val": f"Stat={stat:.2f}", "Res": conclusion}
-                        else:
+                            return {
+                                "Group": name,
+                                "N": N,
+                                "Test": "Too Small",
+                                "P-Val": "-",
+                                "Res": "Unknown",
+                                "Skew": "-",
+                                "Kurtosis": "-",
+                                "Z-Skew": "-",
+                                "Z-Kurt": "-",
+                            }
+
+                        if np.isclose(np.std(data, ddof=1), 0.0, atol=1e-12):
+                            return {
+                                "Group": name,
+                                "N": N,
+                                "Test": "Constant",
+                                "P-Val": "-",
+                                "Res": "Unknown",
+                                "Skew": "0.000",
+                                "Kurtosis": "0.000",
+                                "Z-Skew": "-",
+                                "Z-Kurt": "-",
+                            }
+
+                        skew = stats.skew(data, bias=False)
+                        kurt = stats.kurtosis(data, fisher=True, bias=False)
+                        se_skew = np.sqrt(6 / N) if N > 2 else np.nan
+                        se_kurt = np.sqrt(24 / N) if N > 3 else np.nan
+                        z_skew = skew / se_skew if se_skew and np.isfinite(se_skew) else np.nan
+                        z_kurt = kurt / se_kurt if se_kurt and np.isfinite(se_kurt) else np.nan
+
+                        if N < 50:
                             stat, p = stats.shapiro(data)
-                            conclusion = "Normal ✅" if p > 0.05 else "Non-Normal ⚠️"
-                            return {"Group": name, "N": N, "Test": "Shapiro", "P-Val": f"{p:.4f}", "Res": conclusion}
+                            z_ok = (abs(z_skew) <= 1.96) and (abs(z_kurt) <= 1.96)
+                            conclusion = "Normal ✅" if (p > 0.05 and z_ok) else "Non-Normal ⚠️"
+                            test_name = "Shapiro-Wilk"
+                            p_val = f"{p:.4f}"
+                        elif N <= 300:
+                            stat, p = lilliefors(data, dist="norm")
+                            z_ok = (abs(z_skew) <= 3.29) and (abs(z_kurt) <= 3.29)
+                            conclusion = "Normal ✅" if (p > 0.05 and z_ok) else "Non-Normal ⚠️"
+                            test_name = "Lilliefors (KS adj.)"
+                            p_val = f"{p:.4f}"
+                        else:
+                            normal_enough = (abs(skew) < 2.0) and (abs(kurt) < 7.0)
+                            conclusion = "Normal ✅" if normal_enough else "Non-Normal ⚠️"
+                            test_name = "Skew/Kurtosis"
+                            p_val = "-"
+
+                        return {
+                            "Group": name,
+                            "N": N,
+                            "Test": test_name,
+                            "P-Val": p_val,
+                            "Res": conclusion,
+                            "Skew": f"{skew:.3f}",
+                            "Kurtosis": f"{kurt:.3f}",
+                            "Z-Skew": f"{z_skew:.3f}" if np.isfinite(z_skew) else "-",
+                            "Z-Kurt": f"{z_kurt:.3f}" if np.isfinite(z_kurt) else "-",
+                        }
 
                     if is_grouping:
                         groups = df_clean[x_col].unique()
@@ -164,12 +330,15 @@ if uploaded_file is not None:
                             normality_results.append(check_normality(group_data, g))
                     else:
                         normality_results.append(check_normality(df_clean[y_col], "Global"))
+
+                    log_step("Normality", f"Normality checks completed for {len(normality_results)} group(s)", value=pd.DataFrame(normality_results))
                         
                     st.dataframe(pd.DataFrame(normality_results), hide_index=True)
-                    st.caption("Note: For N > 5000, Anderson-Darling is used instead of Shapiro-Wilk.")
+                    st.caption("Normality method adapts to sample size: Shapiro-Wilk (N<50), Lilliefors (50-300), Skew/Kurtosis (N>300).")
 
                 with c_vis2:
                     st.write("**Distribution Visualizer:**")
+                    viz_mode = st.radio("Plot type", ["Histogram", "Q-Q Plot"], horizontal=True)
                     if is_grouping:
                         target_group = st.selectbox("Select Group to Visualize:", df_clean[x_col].unique())
                         viz_data = df_clean[df_clean[x_col] == target_group][y_col]
@@ -177,12 +346,16 @@ if uploaded_file is not None:
                         viz_data = df_clean[y_col]
 
                     fig, ax = plt.subplots(figsize=(6, 3))
-                    sns.histplot(viz_data, kde=True, stat="density", color="skyblue", alpha=0.6, ax=ax)
-                    xmin, xmax = ax.get_xlim()
-                    x = np.linspace(xmin, xmax, 100)
-                    p = stats.norm.pdf(x, viz_data.mean(), viz_data.std())
-                    ax.plot(x, p, 'r', linewidth=2, label='Normal Dist')
-                    ax.legend()
+                    if viz_mode == "Histogram":
+                        sns.histplot(viz_data, kde=True, stat="density", color="skyblue", alpha=0.6, ax=ax)
+                        xmin, xmax = ax.get_xlim()
+                        x = np.linspace(xmin, xmax, 100)
+                        p = stats.norm.pdf(x, viz_data.mean(), viz_data.std())
+                        ax.plot(x, p, 'r', linewidth=2, label='Normal Dist')
+                        ax.legend()
+                    else:
+                        stats.probplot(viz_data, dist="norm", plot=ax)
+                        ax.set_title("Q-Q Plot")
                     st.pyplot(fig)
             else:
                 st.warning("Dependent variable is not numeric. Normality check skipped.")
@@ -206,11 +379,13 @@ if uploaded_file is not None:
         selected_label = st.selectbox("Choose Method", list(method_map.keys()))
         method_key = method_map[selected_label]
         info = method_info[method_key]
+        log_step("Method Selection", f"Selected method: {info['name']}")
 
         ref_value = 0.0
         if method_key in ['ttest_1samp', 'wilcoxon', 'signtest']: ### UPDATED CONDITION ###
             st.info("ℹ️ This test compares your data against a fixed Reference number.")
             ref_value = st.number_input("Enter Reference Value:", value=0.0)
+            log_step("Inputs", f"Reference value: {ref_value}")
 
         with st.expander(f"📘 Method Guide: {info['name']}", expanded=False):
             st.markdown(f"**When to use:** {info['when']}")
@@ -222,6 +397,14 @@ if uploaded_file is not None:
         if st.button("Run Analysis", type="primary"):
             st.divider()
             st.header(f"🚀 Results: {info['name']}")
+
+            st.session_state.calc_logs = []
+            log_step("Run Analysis", "Initialized calculation logs")
+            log_step("Inputs", f"Method: {info['name']}")
+            log_step("Inputs", f"X column: {x_col}")
+            log_step("Inputs", f"Y column: {y_col}")
+            if method_key in ['ttest_1samp', 'wilcoxon', 'signtest']:
+                log_step("Inputs", f"Reference value: {ref_value}")
             
             ref_data = {
                 "Null Hypothesis": [info['null_hypo']],
@@ -234,31 +417,41 @@ if uploaded_file is not None:
             df_clean = df[[x_col, y_col]].dropna()
             x_data = df_clean[x_col]
             y_data = df_clean[y_col]
+
+            log_step("Data Prep", f"Final dataset size: {len(df_clean)}")
+            log_step("Data Prep", "Preview (head)", value=df_clean.head(10))
             
             if len(df_clean) < 5:
                 st.warning("⚠️ Warning: Small sample size (N < 5). Results may be unreliable.")
+                log_step("Warnings", "Small sample size (N < 5)", level="error")
 
             st.subheader("1. Test Results")
 
             # --- ONE-SAMPLE TESTS (T-TEST, WILCOXON, SIGN) ---
             if method_key in ['ttest_1samp', 'wilcoxon', 'signtest']:
                 st.write(f"Testing against Reference Value: **{ref_value}**")
+                log_step("One-Sample Tests", f"Reference value: {ref_value}")
                 results = []
                 groups = x_data.unique()
                 for g in groups:
                     g_data = y_data[x_data == g]
+                    log_step("One-Sample Tests", f"Group {g} data (head)", value=g_data.head(10))
                     
                     if method_key == 'ttest_1samp':
                         stat, p_val = stats.ttest_1samp(g_data, popmean=ref_value)
                         metric_name, metric_val = "Mean", g_data.mean()
+                        log_step("One-Sample Tests", f"Group {g} t-test stats", value={"stat": stat, "p": p_val})
                     elif method_key == 'wilcoxon':
                         stat, p_val = stats.wilcoxon(g_data - ref_value)
                         metric_name, metric_val = "Median", g_data.median()
+                        log_step("One-Sample Tests", f"Group {g} wilcoxon stats", value={"stat": stat, "p": p_val})
                     else: # SIGN TEST
                         diffs = g_data - ref_value
                         pos = np.sum(diffs > 0)
                         neg = np.sum(diffs < 0)
                         n_valid = pos + neg # Ties (0) are ignored
+                        log_step("One-Sample Tests", f"Group {g} diffs (head)", value=diffs.head(10))
+                        log_step("One-Sample Tests", f"Group {g} sign counts", value={"pos": int(pos), "neg": int(neg), "n_valid": int(n_valid)})
                         
                         if n_valid == 0: 
                             p_val = 1.0 # Exact match
@@ -278,6 +471,7 @@ if uploaded_file is not None:
                         "Diff": f"{diff:.2f}",
                         "P-Value": f"{p_val:.4e}", "Result": sig
                     })
+                    log_step("One-Sample Tests", f"Group {g}: {metric_name}={metric_val:.4f}, P={p_val:.4e}")
                 
                 res_df = pd.DataFrame(results)
                 st.dataframe(res_df.style.apply(lambda x: ['background-color: #d4edda' if "💥" in x['Result'] else '' for i in x], axis=1))
@@ -292,6 +486,9 @@ if uploaded_file is not None:
                 groups = [y_data[x_data == g] for g in x_data.unique()]
                 if method_key == 'anova': stat, p = stats.f_oneway(*groups)
                 else: stat, p = stats.kruskal(*groups)
+
+                log_step("Group Comparison", f"Statistic={stat:.4f}, P={p:.4e}")
+                log_step("Group Comparison", "Group sizes", value=[len(g) for g in groups])
                 
                 c1, c2, c3 = st.columns(3)
                 c1.metric("Statistic", f"{stat:.4f}")
@@ -309,6 +506,7 @@ if uploaded_file is not None:
                     if method_key == 'anova':
                         tukey = pairwise_tukeyhsd(endog=y_data, groups=x_data, alpha=0.05)
                         st.pyplot(tukey.plot_simultaneous())
+                        log_step("Post-Hoc", "Tukey HSD computed", value=str(tukey))
                     else:
                         unique_groups = x_data.unique()
                         pairs = list(itertools.combinations(unique_groups, 2))
@@ -321,18 +519,25 @@ if uploaded_file is not None:
                         fig, ax = plt.subplots()
                         sns.heatmap(p_matrix, annot=True, cmap="coolwarm_r", vmin=0, vmax=0.05, ax=ax)
                         st.pyplot(fig)
+                        log_step("Post-Hoc", "Pairwise Mann-Whitney U computed", value=p_matrix)
 
             # --- T-TEST / MANN-WHITNEY ---
             elif method_key in ['ttest_ind', 'mannwhitney']:
                 groups = x_data.unique()
                 if len(groups) != 2:
                     st.error("Error: Need exactly 2 groups.")
+                    log_step("Errors", "Need exactly 2 groups for this test", level="error")
                 else:
                     g1 = y_data[x_data == groups[0]]
                     g2 = y_data[x_data == groups[1]]
-                    if method_key == 'ttest_ind': stat, p = stats.ttest_ind(g1, g2)
-                    else: stat, p = stats.mannwhitneyu(g1, g2)
+                    log_step("Two-Group Tests", f"Group {groups[0]} data (head)", value=g1.head(10))
+                    log_step("Two-Group Tests", f"Group {groups[1]} data (head)", value=g2.head(10))
+                    if method_key == 'ttest_ind':
+                        stat, p = stats.ttest_ind(g1, g2)
+                    else:
+                        stat, p = stats.mannwhitneyu(g1, g2)
                     st.metric("P-Value", f"{p:.4e}")
+                    log_step("Two-Group Tests", f"Statistic={stat:.4f}, P={p:.4e}", value={"stat": stat, "p": p})
                     fig, ax = plt.subplots(figsize=(8, 4))
                     sns.boxplot(x=x_col, y=y_col, data=df_clean, hue=x_col, palette="Set2", legend=False, ax=ax)
                     st.pyplot(fig)
@@ -343,13 +548,20 @@ if uploaded_file is not None:
                     ct = pd.crosstab(x_data, y_data)
                     stat, p, _, _ = stats.chi2_contingency(ct)
                     st.metric("P-Value", f"{p:.4e}")
+                    log_step("Chi-Square", f"Statistic={stat:.4f}, P={p:.4e}", value=ct)
                 else:
-                    if method_key == 'pearson': stat, p = stats.pearsonr(x_data, y_data)
-                    else: stat, p = stats.spearmanr(x_data, y_data)
+                    log_step("Correlation", "X data (head)", value=x_data.head(10))
+                    log_step("Correlation", "Y data (head)", value=y_data.head(10))
+                    if method_key == 'pearson':
+                        stat, p = stats.pearsonr(x_data, y_data)
+                    else:
+                        stat, p = stats.spearmanr(x_data, y_data)
                     st.metric("Correlation", f"{stat:.4f}", delta=f"P={p:.4e}")
+                    log_step("Correlation", f"Statistic={stat:.4f}, P={p:.4e}", value={"stat": stat, "p": p})
                     fig, ax = plt.subplots()
                     sns.regplot(x=x_col, y=y_col, data=df_clean, ax=ax)
                     st.pyplot(fig)
 
     except Exception as e:
         st.error(f"Error: {e}")
+        log_step("Errors", f"{e}", level="error")
