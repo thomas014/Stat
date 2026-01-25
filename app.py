@@ -102,7 +102,7 @@ st.markdown("---")
 
 # --- 3A. CALCULATION DETAILS PANEL (RIGHT SIDE) ---
 if "show_calc_panel" not in st.session_state:
-    st.session_state.show_calc_panel = True
+    st.session_state.show_calc_panel = False
 if "calc_logs" not in st.session_state:
     st.session_state.calc_logs = []
 
@@ -244,9 +244,21 @@ if uploaded_file is not None:
             if pd.api.types.is_numeric_dtype(df_clean[y_col]) and df_clean[x_col].nunique() < 20:
                 st.subheader("1. Group Summaries")
                 # Added 'median' to the aggregation and included in styling
-                stats_df = df_clean.groupby(x_col)[y_col].agg(['count', 'mean', 'median', 'std', 'min', 'max'])
-                st.dataframe(stats_df.style.background_gradient(cmap='Blues', subset=['mean', 'median']), use_container_width=True)
-                log_step("Group Summaries", "Computed count/mean/median/std/min/max by group", value=stats_df)
+                stats_df = df_clean.groupby(x_col)[y_col].agg(
+                    count='count',
+                    mean='mean',
+                    median='median',
+                    std='std',
+                    min='min',
+                    q25=lambda s: s.quantile(0.25),
+                    q75=lambda s: s.quantile(0.75),
+                    max='max',
+                )
+                st.dataframe(
+                    stats_df.style.background_gradient(cmap='Blues', subset=['mean', 'median', 'q25', 'q75']),
+                    use_container_width=True,
+                )
+                log_step("Group Summaries", "Computed count/mean/median/std/min/q25/q75/max by group", value=stats_df)
             
             # 2. Normality Tests & HISTOGRAM
             st.subheader("2. Normality Tests & Visualization")
@@ -262,26 +274,28 @@ if uploaded_file is not None:
                         return {
                             "Group": name,
                             "N": N,
-                            "Test": "Too Small",
-                            "P-Val": "-",
-                            "Res": "Unknown",
+                            "Test Used": "Too Small",
+                            "Shapiro-Wilk P": "-",
+                            "Lilliefors P": "-",
                             "Skew": "-",
                             "Kurtosis": "-",
                             "Z-Skew": "-",
                             "Z-Kurt": "-",
+                            "Res": "Unknown",
                         }
 
                     if np.isclose(np.std(data, ddof=1), 0.0, atol=1e-12):
                         return {
                             "Group": name,
                             "N": N,
-                            "Test": "Constant",
-                            "P-Val": "-",
-                            "Res": "Unknown",
+                            "Test Used": "Constant",
+                            "Shapiro-Wilk P": "-",
+                            "Lilliefors P": "-",
                             "Skew": "0.000",
                             "Kurtosis": "0.000",
                             "Z-Skew": "-",
                             "Z-Kurt": "-",
+                            "Res": "Unknown",
                         }
 
                     skew = stats.skew(data, bias=False)
@@ -296,29 +310,39 @@ if uploaded_file is not None:
                     z_skew = skew / se_skew if np.isfinite(se_skew) and se_skew != 0 else np.nan
                     z_kurt = kurt / se_kurt if np.isfinite(se_kurt) and se_kurt != 0 else np.nan
 
-                    if N < 50:
-                        stat, p = stats.shapiro(data)
-                        z_ok = (abs(z_skew) <= 1.96) and (abs(z_kurt) <= 1.96)
-                        conclusion = "Normal ✅" if (p > 0.05 and z_ok) else "Non-Normal ⚠️"
-                        test_name = "Shapiro-Wilk"
-                        p_val = f"{p:.4f}"
-                    elif N <= 300:
-                        stat, p = lilliefors(data, dist="norm")
-                        z_ok = (abs(z_skew) <= 3.29) and (abs(z_kurt) <= 3.29)
-                        conclusion = "Normal ✅" if (p > 0.05 and z_ok) else "Non-Normal ⚠️"
-                        test_name = "Lilliefors (KS adj.)"
-                        p_val = f"{p:.4f}"
+                    shapiro_p = "-"
+                    lillie_p = "-"
+                    if N <= 2000:
+                        try:
+                            _, p = stats.shapiro(data)
+                            shapiro_p = f"{p:.4f}"
+                        except Exception:
+                            shapiro_p = "-"
+
+                        try:
+                            _, p = lilliefors(data, dist="norm")
+                            lillie_p = f"{p:.4f}"
+                        except Exception:
+                            lillie_p = "-"
+
+                        z_limit = 1.96 if N < 50 else 3.29
+                        z_ok = (abs(z_skew) <= z_limit) and (abs(z_kurt) <= z_limit)
+                        shapiro_ok = (shapiro_p != "-") and (float(shapiro_p) > 0.05)
+                        lillie_ok = (lillie_p != "-") and (float(lillie_p) > 0.05)
+                        test_ok = shapiro_ok and lillie_ok
+                        conclusion = "Normal ✅" if (test_ok and z_ok) else "Non-Normal ⚠️"
+                        test_name = "Shapiro & Lilliefors"
                     else:
                         normal_enough = (abs(skew) < 2.0) and (abs(kurt) < 7.0)
                         conclusion = "Normal ✅" if normal_enough else "Non-Normal ⚠️"
                         test_name = "Skew/Kurtosis"
-                        p_val = "-"
 
                     return {
                         "Group": name,
                         "N": N,
-                        "Test": test_name,
-                        "P-Val": p_val,
+                        "Test Used": test_name,
+                        "Shapiro-Wilk P": shapiro_p,
+                        "Lilliefors P": lillie_p,
                         "Res": conclusion,
                         "Skew": f"{skew:.3f}",
                         "Kurtosis": f"{kurt:.3f}",
@@ -336,15 +360,36 @@ if uploaded_file is not None:
 
                 log_step("Normality", f"Normality checks completed for {len(normality_results)} group(s)", value=pd.DataFrame(normality_results))
 
-                st.dataframe(pd.DataFrame(normality_results), hide_index=True)
-                st.caption("Normality method adapts to sample size: Shapiro-Wilk (N<50), Lilliefors (50-300), Skew/Kurtosis (N>300).")
+                normality_df = pd.DataFrame(normality_results)
+                normality_tests_df = normality_df[["Group", "N", "Shapiro-Wilk P", "Lilliefors P", "Test Used", "Res"]]
+                normality_shape_df = normality_df[["Group", "Skew", "Kurtosis", "Z-Skew", "Z-Kurt", "Res"]]
+
+                st.write("**Normality Test P-Values:**")
+                st.dataframe(normality_tests_df, hide_index=True)
+                st.write("**Shape Statistics (Skew/Kurtosis):**")
+                st.dataframe(normality_shape_df, hide_index=True)
+
+                st.caption("Normality method adapts to sample size: Shapiro-Wilk and Lilliefors (N≤2000), Skew/Kurtosis (N>2000).")
                 st.markdown(
                     """
-**Thresholds for Normality (How to read the results):**
-- **Small Samples (n < 50):** If the Z-score is between -1.96 and +1.96, the data is normal.
-- **Medium Samples (50 < n < 300):** If the Z-score is between -3.29 and +3.29, the data is normal.
-- **Large Samples (n > 300):** Look at absolute skewness rather than Z-score. If |skewness| < 2.0 and |kurtosis| < 7.0, the data is likely normal enough for parametric tests.
-                    """
+<div style="border: 1px solid #e5e7eb; background: #ffffff; padding: 12px 14px; border-radius: 8px; color: #000000;">
+<strong>Normality & Visualization Guidelines (How to use the results):</strong>
+<ul>
+    <li>While Shapiro-Wilk is generally more powerful (better at detecting non-normality), there are rare "pathological" distributions where K-S might behave differently</li>
+    <li><strong>Low N ($<50$): </strong> Shapiro-Wilk is king. K-S is too weak.</li>
+    <li><strong>Medium N ($50-300$):</strong> Both usually agree, but K-S (Lilliefors) is the traditional choice in older textbooks.</li>
+    <li><strong>High N ($1000-2000$): </strong> Both will likely be "over-sensitive," but seeing that both reject normality ($p < 0.001$) gives the user confidence that the data is genuinely not perfectly normal (mathematically speaking).</li>
+</ul>
+<br/>
+<strong>Thresholds for Normality (How to read the results):</strong>
+<ul>
+    <li><strong>Small Samples (n &lt; 50):</strong> If the Z-score is between -1.96 and +1.96, the data is normal.</li>
+    <li><strong>Medium Samples (50 &lt; n &lt; 300):</strong> If the Z-score is between -3.29 and +3.29, the data is normal.</li>
+    <li><strong>Large Samples (n &gt; 300):</strong> Look at absolute skewness rather than Z-score. If |skewness| &lt; 2.0 and |kurtosis| &lt; 7.0, the data is likely normal enough for parametric tests.</li>
+</ul>
+</div>
+                    """,
+                    unsafe_allow_html=True,
                 )
 
                 st.write("**Distribution Visualizer:**")
@@ -354,43 +399,34 @@ if uploaded_file is not None:
                 else:
                     viz_data = df_clean[y_col]
 
-                c_vis1, c_vis2 = st.columns(2)
-                with c_vis1:
-                    fig, ax = plt.subplots(figsize=(6, 3))
-                    sns.histplot(viz_data, kde=True, stat="density", color="skyblue", alpha=0.6, ax=ax)
-                    xmin, xmax = ax.get_xlim()
-                    x = np.linspace(xmin, xmax, 100)
-                    p = stats.norm.pdf(x, viz_data.mean(), viz_data.std())
-                    ax.plot(x, p, 'r', linewidth=2, label='Normal Dist')
-                    ax.legend()
-                    ax.set_title("Histogram")
-                    st.pyplot(fig)
+                st.write("**Histogram:**")
+                fig, ax = plt.subplots(figsize=(6, 3))
+                sns.histplot(viz_data, kde=True, stat="density", color="skyblue", alpha=0.6, ax=ax)
+                xmin, xmax = ax.get_xlim()
+                x = np.linspace(xmin, xmax, 100)
+                p = stats.norm.pdf(x, viz_data.mean(), viz_data.std())
+                ax.plot(x, p, 'r', linewidth=2, label='Normal Dist')
+                ax.legend()
+                ax.set_title("Histogram")
+                st.pyplot(fig)
 
-                with c_vis2:
-                    st.write("**Q-Q Plot:**")
-                    qq_choice = st.radio(
-                        "Q-Q Plot Type",
-                        ["Standard Q-Q Plot", "Detrended Q-Q Plot (SPSS Standard)"],
-                        horizontal=True,
-                        key="qqplot_type",
-                    )
+                st.write("**Q-Q Plot:**")
+                fig, ax = plt.subplots(figsize=(6, 3))
+                stats.probplot(viz_data, dist="norm", plot=ax)
+                ax.set_title("Q-Q Plot")
+                st.pyplot(fig)
 
-                    if qq_choice == "Standard Q-Q Plot":
-                        fig, ax = plt.subplots(figsize=(6, 3))
-                        stats.probplot(viz_data, dist="norm", plot=ax)
-                        ax.set_title("Q-Q Plot")
-                        st.pyplot(fig)
-                    else:
-                        fig, ax = plt.subplots(figsize=(6, 3))
-                        (osm, osr), (slope, intercept, _) = stats.probplot(viz_data, dist="norm", fit=True)
-                        expected = slope * osm + intercept
-                        detrended = osr - expected
-                        ax.axhline(0, color="gray", linestyle="--", linewidth=1)
-                        ax.scatter(expected, detrended, color="tab:blue", s=18, alpha=0.8)
-                        ax.set_title("Detrended Q-Q Plot (SPSS Standard)")
-                        ax.set_xlabel("Expected Normal Value")
-                        ax.set_ylabel("Observed - Expected")
-                        st.pyplot(fig)
+                st.write("**Detrended Q-Q Plot (SPSS Standard):**")
+                fig, ax = plt.subplots(figsize=(6, 3))
+                (osm, osr), (slope, intercept, _) = stats.probplot(viz_data, dist="norm", fit=True)
+                expected = slope * osm + intercept
+                detrended = osr - expected
+                ax.axhline(0, color="gray", linestyle="--", linewidth=1)
+                ax.scatter(expected, detrended, color="tab:blue", s=18, alpha=0.8)
+                ax.set_title("Detrended Q-Q Plot (SPSS Standard)")
+                ax.set_xlabel("Expected Normal Value")
+                ax.set_ylabel("Observed - Expected")
+                st.pyplot(fig)
             else:
                 st.warning("Dependent variable is not numeric. Normality check skipped.")
                 
