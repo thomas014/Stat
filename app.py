@@ -367,10 +367,30 @@ if uploaded_file is not None:
                     st.pyplot(fig)
 
                 with c_vis2:
-                    fig, ax = plt.subplots(figsize=(6, 3))
-                    stats.probplot(viz_data, dist="norm", plot=ax)
-                    ax.set_title("Q-Q Plot")
-                    st.pyplot(fig)
+                    st.write("**Q-Q Plot:**")
+                    qq_choice = st.radio(
+                        "Q-Q Plot Type",
+                        ["Standard Q-Q Plot", "Detrended Q-Q Plot (SPSS Standard)"],
+                        horizontal=True,
+                        key="qqplot_type",
+                    )
+
+                    if qq_choice == "Standard Q-Q Plot":
+                        fig, ax = plt.subplots(figsize=(6, 3))
+                        stats.probplot(viz_data, dist="norm", plot=ax)
+                        ax.set_title("Q-Q Plot")
+                        st.pyplot(fig)
+                    else:
+                        fig, ax = plt.subplots(figsize=(6, 3))
+                        (osm, osr), (slope, intercept, _) = stats.probplot(viz_data, dist="norm", fit=True)
+                        expected = slope * osm + intercept
+                        detrended = osr - expected
+                        ax.axhline(0, color="gray", linestyle="--", linewidth=1)
+                        ax.scatter(expected, detrended, color="tab:blue", s=18, alpha=0.8)
+                        ax.set_title("Detrended Q-Q Plot (SPSS Standard)")
+                        ax.set_xlabel("Expected Normal Value")
+                        ax.set_ylabel("Observed - Expected")
+                        st.pyplot(fig)
             else:
                 st.warning("Dependent variable is not numeric. Normality check skipped.")
                 
