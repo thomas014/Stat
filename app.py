@@ -5,6 +5,8 @@ import scipy.stats as stats
 import matplotlib.pyplot as plt
 import seaborn as sns
 from statsmodels.stats.multicomp import pairwise_tukeyhsd
+from statsmodels.stats.oneway import anova_oneway
+from statsmodels.stats.oneway import effectsize_oneway
 from statsmodels.stats.diagnostic import lilliefors
 import itertools
 
@@ -554,8 +556,75 @@ if uploaded_file is not None:
             # --- ANOVA / KRUSKAL ---
             elif method_key in ['anova', 'kruskal']:
                 groups = [y_data[x_data == g] for g in x_data.unique()]
-                if method_key == 'anova': stat, p = stats.f_oneway(*groups)
-                else: stat, p = stats.kruskal(*groups)
+                if method_key == 'anova':
+                    # --- Homogeneity of Variances (Levene/Brown-Forsythe) ---
+                    g_labels = list(x_data.unique())
+                    g_values = [y_data[x_data == g].to_numpy() for g in g_labels]
+                    n_total = int(np.sum([len(g) for g in g_values]))
+                    k_groups = len(g_values)
+
+                    lev_mean_stat, lev_mean_p = stats.levene(*g_values, center='mean')
+                    lev_med_stat, lev_med_p = stats.levene(*g_values, center='median')
+                    lev_trim_stat, lev_trim_p = stats.levene(*g_values, center='trimmed', proportiontocut=0.05)
+
+                    # Adjusted df (Brown-Forsythe with Welch correction) on absolute deviations from median
+                    med_centers = [np.median(g) for g in g_values]
+                    z_groups = [np.abs(g - med_centers[i]) for i, g in enumerate(g_values)]
+
+                    # 2. Calculate Welch-Satterthwaite df for the deviations (SPSS Style)
+                    z_vars = [np.var(g, ddof=1) for g in z_groups]
+                    z_ns = [len(g) for g in z_groups]
+                    numerator = sum((n - 1) * v for n, v in zip(z_ns, z_vars))**2
+                    denominator = sum(((n - 1) * v)**2 / (n - 1) for n, v in zip(z_ns, z_vars))
+                    bf_df1 = k_groups - 1 
+                    bf_df2 = numerator / denominator
+                    bf_stat, _ = stats.f_oneway(*z_groups)
+                    bf_p = 1 - stats.f.cdf(bf_stat, k_groups - 1, bf_df2)
+
+                    homogeneity_table = pd.DataFrame([
+                        {
+                            "": "Based on Mean",
+                            "Levene Statistic": lev_mean_stat,
+                            "df1": k_groups - 1,
+                            "df2": n_total - k_groups,
+                            "Sig.": lev_mean_p,
+                        },
+                        {
+                            "": "Based on Median",
+                            "Levene Statistic": lev_med_stat,
+                            "df1": k_groups - 1,
+                            "df2": n_total - k_groups,
+                            "Sig.": lev_med_p,
+                        },
+                        {
+                            "": "Based on Median and with adjusted df",
+                            "Levene Statistic": bf_stat,
+                            "df1": bf_df1,
+                            "df2": bf_df2,
+                            "Sig.": bf_p,
+                        },
+                        {
+                            "": "Based on trimmed mean",
+                            "Levene Statistic": lev_trim_stat,
+                            "df1": k_groups - 1,
+                            "df2": n_total - k_groups,
+                            "Sig.": lev_trim_p,
+                        },
+                    ])
+
+                    homogeneity_display = homogeneity_table.copy()
+                    for col in ["Levene Statistic", "df1", "df2", "Sig."]:
+                        homogeneity_display[col] = homogeneity_display[col].map(
+                            lambda v: f"{v:.3f}" if pd.notna(v) else "-"
+                        )
+
+                    st.write("**Tests of Homogeneity of Variances**")
+                    st.dataframe(homogeneity_display, hide_index=True)
+                    log_step("ANOVA", "Homogeneity of variances computed", value=homogeneity_table)
+
+                    stat, p = stats.f_oneway(*groups)
+                else:
+                    stat, p = stats.kruskal(*groups)
 
                 log_step("Group Comparison", f"Statistic={stat:.4f}, P={p:.4e}")
                 log_step("Group Comparison", "Group sizes", value=[len(g) for g in groups])
@@ -565,6 +634,66 @@ if uploaded_file is not None:
                 c2.metric("P-Value", f"{p:.4e}")
                 if p < 0.05: c3.success("Significant Difference")
                 else: c3.warning("No Difference")
+
+                if method_key == 'anova':
+                    g_labels = list(x_data.unique())
+                    g_values = [y_data[x_data == g].to_numpy() for g in g_labels]
+                    n_total = int(np.sum([len(g) for g in g_values]))
+                    k_groups = len(g_values)
+                    overall_mean = float(np.mean(y_data))
+                    group_means = [float(np.mean(g)) for g in g_values]
+
+                    ss_between = float(np.sum([len(g_values[i]) * (group_means[i] - overall_mean) ** 2 for i in range(k_groups)]))
+                    ss_within = float(np.sum([np.sum((g_values[i] - group_means[i]) ** 2) for i in range(k_groups)]))
+                    ss_total = ss_between + ss_within
+
+                    df_between = k_groups - 1
+                    df_within = n_total - k_groups
+                    df_total = n_total - 1
+                    ms_between = ss_between / df_between if df_between > 0 else np.nan
+                    ms_within = ss_within / df_within if df_within > 0 else np.nan
+                    f_stat = ms_between / ms_within if ms_within > 0 else np.nan
+                    p_val = 1 - stats.f.cdf(f_stat, df_between, df_within) if np.isfinite(f_stat) else 1.0
+
+                    anova_table = pd.DataFrame([
+                        {
+                            "": "Between Groups",
+                            "Sum of Squares": ss_between,
+                            "df": df_between,
+                            "Mean Square": ms_between,
+                            "F": f_stat,
+                            "Sig.": p_val,
+                        },
+                        {
+                            "": "Within Groups",
+                            "Sum of Squares": ss_within,
+                            "df": df_within,
+                            "Mean Square": ms_within,
+                            "F": "",
+                            "Sig.": "",
+                        },
+                        {
+                            "": "Total",
+                            "Sum of Squares": ss_total,
+                            "df": df_total,
+                            "Mean Square": "",
+                            "F": "",
+                            "Sig.": "",
+                        },
+                    ])
+
+                    anova_display = anova_table.copy()
+                    for col in ["Sum of Squares", "Mean Square", "F", "Sig."]:
+                        anova_display[col] = anova_display[col].map(
+                            lambda v: f"{v:.3f}" if isinstance(v, (int, float, np.floating)) and pd.notna(v) else v
+                        )
+                    anova_display["df"] = anova_display["df"].map(
+                        lambda v: f"{int(v)}" if isinstance(v, (int, float, np.floating)) and pd.notna(v) else v
+                    )
+
+                    st.write("**ANOVA**")
+                    st.dataframe(anova_display, hide_index=True)
+                    log_step("ANOVA", "ANOVA table computed", value=anova_table)
                 
                 fig, ax = plt.subplots(figsize=(8, 4))
                 sns.boxplot(x=x_col, y=y_col, data=df_clean, hue=x_col, palette="viridis", legend=False, ax=ax)
@@ -574,25 +703,181 @@ if uploaded_file is not None:
                     st.divider()
                     st.subheader("2. Post-Hoc Analysis")
                     if method_key == 'anova':
+                        equal_var = homogeneity_table.loc[homogeneity_table[""] == "Based on Mean", "Sig."].iloc[0] >= 0.05
+
                         tukey = pairwise_tukeyhsd(endog=y_data, groups=x_data, alpha=0.05)
+                        tukey_df = pd.DataFrame(
+                            tukey.summary().data[1:],
+                            columns=tukey.summary().data[0],
+                        )
+                        tukey_df.rename(
+                            columns={
+                                "group1": "(I) Group",
+                                "group2": "(J) Group",
+                                "meandiff": "Mean Difference (I-J)",
+                                "p-adj": "Sig.",
+                                "lower": "Lower Bound",
+                                "upper": "Upper Bound",
+                            },
+                            inplace=True,
+                        )
+
+                        tukey_display = tukey_df.copy()
+                        for col in ["Mean Difference (I-J)", "Sig.", "Lower Bound", "Upper Bound"]:
+                            tukey_display[col] = tukey_display[col].map(
+                                lambda v: f"{v:.3f}" if pd.notna(v) else "-"
+                            )
+
+                        st.write("**Multiple Comparisons (Tukey HSD)**")
+                        if not equal_var:
+                            st.caption("Variances unequal: Tukey shown for reference; Games-Howell is preferred.")
+                        st.dataframe(tukey_display, hide_index=True)
                         st.pyplot(tukey.plot_simultaneous())
-                        log_step("Post-Hoc", "Tukey HSD computed", value=str(tukey))
+                        log_step("Post-Hoc", "Tukey HSD computed", value=tukey_df)
+
+                        if not equal_var:
+                            g_labels = list(x_data.unique())
+                            g_values = [y_data[x_data == g].to_numpy() for g in g_labels]
+                            k_groups = len(g_labels)
+
+                            means = {g_labels[i]: float(np.mean(g_values[i])) for i in range(k_groups)}
+                            variances = {g_labels[i]: float(np.var(g_values[i], ddof=1)) for i in range(k_groups)}
+                            ns = {g_labels[i]: int(len(g_values[i])) for i in range(k_groups)}
+
+                            rows = []
+                            alpha = 0.05
+                            for i in range(k_groups):
+                                for j in range(i + 1, k_groups):
+                                    g1 = g_labels[i]
+                                    g2 = g_labels[j]
+                                    mean_diff = means[g1] - means[g2]
+                                    se_mean = np.sqrt(variances[g1] / ns[g1] + variances[g2] / ns[g2])
+                                    se_q = se_mean * np.sqrt(0.5)
+                                    df_num = (variances[g1] / ns[g1] + variances[g2] / ns[g2]) ** 2
+                                    df_den = ((variances[g1] / ns[g1]) ** 2) / (ns[g1] - 1) + ((variances[g2] / ns[g2]) ** 2) / (ns[g2] - 1)
+                                    df = df_num / df_den if df_den > 0 else np.nan
+
+                                    q = abs(mean_diff) / se_q if se_q > 0 else 0.0
+                                    p_val = stats.studentized_range.sf(q, k_groups, df) if np.isfinite(df) else 1.0
+                                    q_crit = stats.studentized_range.ppf(1 - alpha, k_groups, df) if np.isfinite(df) else np.nan
+                                    margin = q_crit * se_q if np.isfinite(q_crit) else np.nan
+                                    ci_low = mean_diff - margin if np.isfinite(margin) else np.nan
+                                    ci_high = mean_diff + margin if np.isfinite(margin) else np.nan
+
+                                    rows.append({
+                                        "(I) Group": g1,
+                                        "(J) Group": g2,
+                                        "Mean Difference (I-J)": mean_diff,
+                                        "Std. Error": se_mean,
+                                        "Sig.": p_val,
+                                        "Lower Bound": ci_low,
+                                        "Upper Bound": ci_high,
+                                    })
+
+                            gh_df = pd.DataFrame(rows)
+                            gh_display = gh_df.copy()
+                            for col in ["Mean Difference (I-J)", "Std. Error", "Sig.", "Lower Bound", "Upper Bound"]:
+                                gh_display[col] = gh_display[col].map(
+                                    lambda v: f"{v:.3f}" if pd.notna(v) else "-"
+                                )
+
+                            st.write("**Multiple Comparisons (Games-Howell)**")
+                            st.dataframe(gh_display, hide_index=True)
+                            st.write("**Mean Difference Confidence Interval Plot (Games-Howell)**")
+
+                            gh_plot_df = gh_df.copy()
+                            gh_plot_df["Comparison"] = gh_plot_df["(I) Group"].astype(str) + " - " + gh_plot_df["(J) Group"].astype(str)
+                            gh_plot_df = gh_plot_df.sort_values("Mean Difference (I-J)")
+
+                            fig_h = max(3.5, 0.4 * len(gh_plot_df))
+                            fig, ax = plt.subplots(figsize=(8, fig_h))
+                            y_pos = np.arange(len(gh_plot_df))
+
+                            ax.errorbar(
+                                gh_plot_df["Mean Difference (I-J)"],
+                                y_pos,
+                                xerr=[
+                                    gh_plot_df["Mean Difference (I-J)"] - gh_plot_df["Lower Bound"],
+                                    gh_plot_df["Upper Bound"] - gh_plot_df["Mean Difference (I-J)"]
+                                ],
+                                fmt='o',
+                                color='#1f77b4',
+                                ecolor='#1f77b4',
+                                elinewidth=2,
+                                capsize=3,
+                            )
+                            ax.axvline(0, color='gray', linestyle='--', linewidth=1)
+                            ax.set_yticks(y_pos)
+                            ax.set_yticklabels(gh_plot_df["Comparison"])
+                            ax.set_xlabel("Mean Difference (I-J) with 95% CI")
+                            ax.set_title("Games-Howell Mean Differences")
+                            ax.invert_yaxis()
+                            ax.grid(axis='x', linestyle=':', alpha=0.6)
+                            st.pyplot(fig)
+                            log_step("Post-Hoc", "Games-Howell computed", value=gh_df)
                     else:
                         unique_groups = x_data.unique()
                         pairs = list(itertools.combinations(unique_groups, 2))
                         num_pairs = len(pairs)
+
+                        values = y_data.to_numpy()
+                        ranks = stats.rankdata(values, method="average")
+                        n_total = len(values)
+                        _, tie_counts = np.unique(values, return_counts=True)
+                        tie_sum = np.sum(tie_counts**3 - tie_counts)
+                        tie_correction = (tie_sum / (12 * (n_total - 1))) if n_total > 1 else 0.0
+                        rank_var = (n_total * (n_total + 1)) / 12 - tie_correction
+
+                        mean_ranks = {}
+                        group_sizes = {}
+                        for g in unique_groups:
+                            mask = (x_data == g).to_numpy()
+                            mean_ranks[g] = float(np.mean(ranks[mask]))
+                            group_sizes[g] = int(np.sum(mask))
+
+                        results_rows = []
                         p_matrix = pd.DataFrame(index=unique_groups, columns=unique_groups, dtype=float)
                         for g1, g2 in pairs:
-                            _, u_p = stats.mannwhitneyu(y_data[x_data==g1], y_data[x_data==g2])
-                            u_p_adjusted = min(u_p * num_pairs, 1.0)
-                            p_matrix.at[g1, g2] = u_p_adjusted
-                            p_matrix.at[g2, g1] = u_p_adjusted
+                            n1 = group_sizes[g1]
+                            n2 = group_sizes[g2]
+                            diff = mean_ranks[g1] - mean_ranks[g2]
+                            se = np.sqrt(rank_var * (1.0 / n1 + 1.0 / n2)) if rank_var > 0 else np.nan
+                            z = diff / se if np.isfinite(se) and se > 0 else np.nan
+                            p_val = 2 * (1 - stats.norm.cdf(abs(z))) if np.isfinite(z) else 1.0
+                            p_adj = min(p_val * num_pairs, 1.0)
+
+                            results_rows.append({
+                                "Sample 1-Sample 2": f"{g1}-{g2}",
+                                "Test Statistic": diff,
+                                "Std. Error": se,
+                                "Std. Test Statistic": z,
+                                "Sig.": p_val,
+                                "Adj. Sig.": p_adj,
+                            })
+
+                            p_matrix.at[g1, g2] = p_adj
+                            p_matrix.at[g2, g1] = p_adj
+
                         p_matrix.fillna(1.0, inplace=True)
+
+                        results_df = pd.DataFrame(results_rows)
+                        results_df_display = results_df.copy()
+                        for col in ["Test Statistic", "Std. Error", "Std. Test Statistic", "Sig.", "Adj. Sig."]:
+                            results_df_display[col] = results_df_display[col].map(lambda v: f"{v:.3f}" if pd.notna(v) else "-")
+
+                        st.write("**Pairwise Comparisons (Dunn's Test - Global Ranks):**")
+                        st.dataframe(results_df_display, hide_index=True)
                         st.write(f"**Note:** P-values are Bonferroni-corrected for {num_pairs} comparisons.")
+
                         fig, ax = plt.subplots()
                         sns.heatmap(p_matrix, annot=True, cmap="coolwarm_r", vmin=0, vmax=0.05, ax=ax)
                         st.pyplot(fig)
-                        log_step("Post-Hoc", f"Pairwise Mann-Whitney U computed (Bonferroni n={num_pairs})", value=p_matrix)
+
+                        log_step(
+                            "Post-Hoc",
+                            f"Dunn's test computed (Bonferroni n={num_pairs})",
+                            value=results_df,
+                        )
 
             # --- T-TEST / MANN-WHITNEY ---
             elif method_key in ['ttest_ind', 'mannwhitney']:
