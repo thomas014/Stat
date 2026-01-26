@@ -459,6 +459,17 @@ if uploaded_file is not None:
             ref_value = st.number_input("Enter Reference Value:", value=0.0)
             log_step("Inputs", f"Reference value: {ref_value}")
 
+        test_prop = 0.5
+        if method_key == 'signtest':
+            test_prop = st.number_input(
+                "Enter Test Proportion for Sign Test:",
+                value=0.5,
+                min_value=0.0,
+                max_value=1.0,
+                step=0.01,
+            )
+            log_step("Inputs", f"Sign test proportion: {test_prop}")
+
         with st.expander(f"📘 Method Guide: {info['name']}", expanded=False):
             st.markdown(f"**When to use:** {info['when']}")
             st.markdown(f"**Assumptions:** {info['assumptions']}")
@@ -477,6 +488,8 @@ if uploaded_file is not None:
             log_step("Inputs", f"Y column: {y_col}")
             if method_key in ['ttest_1samp', 'wilcoxon', 'signtest']:
                 log_step("Inputs", f"Reference value: {ref_value}")
+            if method_key == 'signtest':
+                log_step("Inputs", f"Sign test proportion: {test_prop}")
             
             ref_data = {
                 "Null Hypothesis": [info['null_hypo']],
@@ -561,7 +574,7 @@ if uploaded_file is not None:
                             p_val = 1.0 # Exact match
                         else:
                             # Use Binomial Test for exact P-value
-                            res = stats.binomtest(k=pos, n=n_valid, p=0.5, alternative='two-sided')
+                            res = stats.binomtest(k=pos, n=n_valid, p=test_prop, alternative='two-sided')
                             p_val = res.pvalue
                         
                         metric_name, metric_val = "Median", g_data.median()
@@ -577,7 +590,7 @@ if uploaded_file is not None:
                                 "Category": f"Group 1 (<= {ref_value})",
                                 "N": count_le,
                                 "Observed Prop.": obs_prop_le,
-                                "Test Prop.": 0.50,
+                                "Test Prop.": test_prop,
                                 "Exact Sig. (2-tailed)": p_val,
                             },
                             {
