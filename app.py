@@ -504,6 +504,8 @@ if uploaded_file is not None:
                 st.write(f"Testing against Reference Value: **{ref_value}**")
                 log_step("One-Sample Tests", f"Reference value: {ref_value}")
                 results = []
+                binom_tables = []
+                wilcoxon_tables = []
                 groups = x_data.unique()
                 for g in groups:
                     g_data = y_data[x_data == g]
@@ -514,7 +516,37 @@ if uploaded_file is not None:
                         metric_name, metric_val = "Mean", g_data.mean()
                         log_step("One-Sample Tests", f"Group {g} t-test stats", value={"stat": stat, "p": p_val})
                     elif method_key == 'wilcoxon':
-                        stat, p_val = stats.wilcoxon(g_data - ref_value)
+                        diffs = g_data - ref_value
+                        diffs_nz = diffs[diffs != 0]
+                        stat, p_val = stats.wilcoxon(diffs_nz)
+
+                        abs_diffs = np.abs(diffs_nz.to_numpy())
+                        ranks = stats.rankdata(abs_diffs, method="average")
+                        pos_mask = diffs_nz.to_numpy() > 0
+                        neg_mask = diffs_nz.to_numpy() < 0
+                        w_plus = float(np.sum(ranks[pos_mask]))
+                        w_minus = float(np.sum(ranks[neg_mask]))
+                        w_stat = min(w_plus, w_minus)
+
+                        n_total = int(len(g_data))
+                        n_valid = int(len(diffs_nz))
+                        mean_w = n_valid * (n_valid + 1) / 4
+                        _, tie_counts = np.unique(abs_diffs, return_counts=True)
+                        tie_correction = np.sum(tie_counts**3 - tie_counts) / 48
+                        var_w = (n_valid * (n_valid + 1) * (2 * n_valid + 1)) / 24 - tie_correction
+                        se_w = np.sqrt(var_w) if var_w > 0 else np.nan
+                        z_w = (w_stat - mean_w) / se_w if np.isfinite(se_w) and se_w > 0 else np.nan
+                        p_z = 2 * (1 - stats.norm.cdf(abs(z_w))) if np.isfinite(z_w) else 1.0
+
+                        wilcoxon_table = pd.DataFrame([
+                            {"": "Total N", "Value": n_total},
+                            {"": "Test Statistic", "Value": w_stat},
+                            {"": "Standard Error", "Value": se_w},
+                            {"": "Standardized Test Statistic", "Value": z_w},
+                            {"": "Asymptotic Sig.(2-sided test)", "Value": p_z},
+                        ])
+                        wilcoxon_tables.append((g, wilcoxon_table))
+
                         metric_name, metric_val = "Median", g_data.median()
                         log_step("One-Sample Tests", f"Group {g} wilcoxon stats", value={"stat": stat, "p": p_val})
                     else: # SIGN TEST
@@ -534,6 +566,37 @@ if uploaded_file is not None:
                         
                         metric_name, metric_val = "Median", g_data.median()
 
+                        n_total = len(g_data)
+                        count_le = int(np.sum(g_data <= ref_value))
+                        count_gt = int(np.sum(g_data > ref_value))
+                        obs_prop_le = count_le / n_total if n_total > 0 else np.nan
+                        obs_prop_gt = count_gt / n_total if n_total > 0 else np.nan
+
+                        binom_table = pd.DataFrame([
+                            {
+                                "Category": f"Group 1 (<= {ref_value})",
+                                "N": count_le,
+                                "Observed Prop.": obs_prop_le,
+                                "Test Prop.": 0.50,
+                                "Exact Sig. (2-tailed)": p_val,
+                            },
+                            {
+                                "Category": f"Group 2 (> {ref_value})",
+                                "N": count_gt,
+                                "Observed Prop.": obs_prop_gt,
+                                "Test Prop.": "",
+                                "Exact Sig. (2-tailed)": "",
+                            },
+                            {
+                                "Category": "Total",
+                                "N": n_total,
+                                "Observed Prop.": 1.00 if n_total > 0 else np.nan,
+                                "Test Prop.": "",
+                                "Exact Sig. (2-tailed)": "",
+                            },
+                        ])
+                        binom_tables.append((g, binom_table))
+
                     sig = "Significant 💥" if p_val < 0.05 else "Not Sig"
                     diff = metric_val - ref_value
                     
@@ -544,9 +607,32 @@ if uploaded_file is not None:
                         "P-Value": f"{p_val:.4e}", "Result": sig
                     })
                     log_step("One-Sample Tests", f"Group {g}: {metric_name}={metric_val:.4f}, P={p_val:.4e}")
-                
-                res_df = pd.DataFrame(results)
-                st.dataframe(res_df.style.apply(lambda x: ['background-color: #d4edda' if "💥" in x['Result'] else '' for i in x], axis=1))
+
+                if method_key == 'signtest':
+                    for g, table in binom_tables:
+                        st.write(f"**Binomial Test ({g})**")
+                        display_table = table.copy()
+                        display_table["Observed Prop."] = display_table["Observed Prop."].map(
+                            lambda v: f"{v:.2f}" if isinstance(v, (int, float, np.floating)) and pd.notna(v) else v
+                        )
+                        display_table["Test Prop."] = display_table["Test Prop."].map(
+                            lambda v: f"{v:.2f}" if isinstance(v, (int, float, np.floating)) and pd.notna(v) else v
+                        )
+                        display_table["Exact Sig. (2-tailed)"] = display_table["Exact Sig. (2-tailed)"].map(
+                            lambda v: f"{v:.3f}" if isinstance(v, (int, float, np.floating)) and pd.notna(v) else v
+                        )
+                        st.dataframe(display_table, hide_index=True)
+                elif method_key == 'wilcoxon':
+                    for g, table in wilcoxon_tables:
+                        st.write(f"**One-Sample Wilcoxon Signed Rank Test Summary ({g})**")
+                        display_table = table.copy()
+                        display_table["Value"] = display_table["Value"].map(
+                            lambda v: f"{v:.3f}" if isinstance(v, (int, float, np.floating)) and pd.notna(v) else v
+                        )
+                        st.dataframe(display_table, hide_index=True)
+                else:
+                    res_df = pd.DataFrame(results)
+                    st.dataframe(res_df.style.apply(lambda x: ['background-color: #d4edda' if "💥" in x['Result'] else '' for i in x], axis=1))
                 
                 fig, ax = plt.subplots(figsize=(8, 4))
                 sns.boxplot(x=x_col, y=y_col, data=df_clean, hue=x_col, palette="coolwarm", legend=False, ax=ax)
