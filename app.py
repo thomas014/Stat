@@ -250,8 +250,8 @@ if uploaded_file is not None:
                     median='median',
                     std='std',
                     min='min',
-                    q25=lambda s: s.quantile(0.25),
-                    q75=lambda s: s.quantile(0.75),
+                    q25=lambda s: np.percentile(s, 25, method='weibull'),
+                    q75=lambda s: np.percentile(s, 75, method='weibull'),
                     max='max',
                 )
                 st.dataframe(
