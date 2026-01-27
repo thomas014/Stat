@@ -3,6 +3,7 @@ import pandas as pd
 import numpy as np
 import scipy.stats as stats
 import matplotlib.pyplot as plt
+from matplotlib.lines import Line2D
 import seaborn as sns
 from statsmodels.stats.multicomp import pairwise_tukeyhsd
 from statsmodels.stats.oneway import anova_oneway
@@ -935,7 +936,8 @@ if uploaded_file is not None:
                             group_sizes[g] = int(np.sum(mask))
 
                         results_rows = []
-                        p_matrix = pd.DataFrame(index=unique_groups, columns=unique_groups, dtype=float)
+                        p_matrix_raw = pd.DataFrame(index=unique_groups, columns=unique_groups, dtype=float)
+                        p_matrix_display = pd.DataFrame(index=unique_groups, columns=unique_groups, dtype=float)
                         for g1, g2 in pairs:
                             n1 = group_sizes[g1]
                             n2 = group_sizes[g2]
@@ -944,6 +946,7 @@ if uploaded_file is not None:
                             z = diff / se if np.isfinite(se) and se > 0 else np.nan
                             p_val = 2 * (1 - stats.norm.cdf(abs(z))) if np.isfinite(z) else 1.0
                             p_adj = min(p_val * num_pairs, 1.0)
+                            p_adj_display = float(f"{p_adj:.3f}")
 
                             results_rows.append({
                                 "Sample 1-Sample 2": f"{g1}-{g2}",
@@ -954,10 +957,13 @@ if uploaded_file is not None:
                                 "Adj. Sig.": p_adj,
                             })
 
-                            p_matrix.at[g1, g2] = p_adj
-                            p_matrix.at[g2, g1] = p_adj
+                            p_matrix_raw.at[g1, g2] = p_adj
+                            p_matrix_raw.at[g2, g1] = p_adj
+                            p_matrix_display.at[g1, g2] = p_adj_display
+                            p_matrix_display.at[g2, g1] = p_adj_display
 
-                        p_matrix.fillna(1.0, inplace=True)
+                        p_matrix_raw.fillna(1.0, inplace=True)
+                        p_matrix_display.fillna(1.0, inplace=True)
 
                         results_df = pd.DataFrame(results_rows)
                         results_df_display = results_df.copy()
@@ -969,8 +975,48 @@ if uploaded_file is not None:
                         st.write(f"**Note:** P-values are Bonferroni-corrected for {num_pairs} comparisons.")
 
                         fig, ax = plt.subplots()
-                        sns.heatmap(p_matrix, annot=True, cmap="coolwarm_r", vmin=0, vmax=0.05, ax=ax)
+                        sns.heatmap(p_matrix_display, annot=True, cmap="coolwarm_r", vmin=0, vmax=0.05, ax=ax)
                         st.pyplot(fig)
+
+                        st.write("**Pairwise Comparison Network (Adj. Sig.)**")
+                        groups_list = list(p_matrix_display.index)
+                        n_groups = len(groups_list)
+                        angles = np.linspace(0, 2 * np.pi, n_groups, endpoint=False)
+                        positions = {
+                            groups_list[i]: (np.cos(angles[i]), np.sin(angles[i]))
+                            for i in range(n_groups)
+                        }
+
+                        fig_net, ax_net = plt.subplots(figsize=(6, 6))
+                        ax_net.set_title(f"Pairwise Comparisons of {y_col}")
+
+                        for i in range(n_groups):
+                            for j in range(i + 1, n_groups):
+                                g1 = groups_list[i]
+                                g2 = groups_list[j]
+                                p_adj_disp = float(p_matrix_display.at[g1, g2]) if pd.notna(p_matrix_display.at[g1, g2]) else 1.0
+                                color = "#2b83ba" if p_adj_disp <= 0.05 else "#c51b7d"
+                                x1, y1 = positions[g1]
+                                x2, y2 = positions[g2]
+                                ax_net.plot([x1, x2], [y1, y2], color=color, linewidth=1.8, alpha=0.9)
+
+                        for g in groups_list:
+                            x, y = positions[g]
+                            ax_net.scatter([x], [y], s=220, color="#8ecae6", edgecolor="#023047", zorder=3)
+                            label = f"{g}\n{mean_ranks[g]:.2f}"
+                            ax_net.text(x, y, label, ha="center", va="center", fontsize=8, zorder=4)
+
+                        legend_items = [
+                            Line2D([0], [0], color="#2b83ba", lw=2, label="< 0.05"),
+                            Line2D([0], [0], color="#c51b7d", lw=2, label=">= 0.05"),
+                        ]
+                        ax_net.legend(handles=legend_items, title="Adj. Sig.", loc="upper right")
+                        ax_net.set_aspect("equal")
+                        ax_net.set_xlim(-1.2, 1.2)
+                        ax_net.set_ylim(-1.2, 1.2)
+                        ax_net.axis("off")
+                        st.pyplot(fig_net)
+                        st.caption("Each node shows the sample average rank of the selected dependent variable.")
 
                         log_step(
                             "Post-Hoc",
