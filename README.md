@@ -216,8 +216,8 @@ If you encounter issues:
 * P ≥ 0.05: Result is not significant (fail to reject null hypothesis)
 
 ### Normality Interpretation
-* **Small samples:** Check if Z-scores are between -1.96 and +1.96
-* **Medium samples:** Check if Z-scores are between -3.29 and +3.29
+* **Small samples:** Check if Shapiro-Wilk is >=0.05 or Z-scores are between -1.96 and +1.96
+* **Medium samples:** Check if  K-S (Lilliefors) is >=0.05 or Z-scores are between -3.29 and +3.29
 * **Large samples:** Check if |skewness| < 2.0 and |kurtosis| < 7.0
 
 ### Effect Size (Coming Soon)
