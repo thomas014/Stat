@@ -1087,9 +1087,105 @@ if uploaded_file is not None:
                     log_step("Two-Group Tests", f"Group {groups[0]} data (head)", value=g1.head(10))
                     log_step("Two-Group Tests", f"Group {groups[1]} data (head)", value=g2.head(10))
                     if method_key == 'ttest_ind':
-                        stat, p = stats.ttest_ind(g1, g2)
-                        st.metric("P-Value", f"{p:.4e}")
-                        log_step("Two-Group Tests", f"Statistic={stat:.4f}, P={p:.4e}", value={"stat": stat, "p": p})
+                        n1 = len(g1)
+                        n2 = len(g2)
+                        mean1 = float(np.mean(g1)) if n1 > 0 else np.nan
+                        mean2 = float(np.mean(g2)) if n2 > 0 else np.nan
+                        var1 = float(np.var(g1, ddof=1)) if n1 > 1 else np.nan
+                        var2 = float(np.var(g2, ddof=1)) if n2 > 1 else np.nan
+
+                        lev_stat, lev_p = stats.levene(g1, g2, center="mean")
+                        homogeneity_table = pd.DataFrame(
+                            {
+                                "": [y_col],
+                                " ": ["Equal variances assumed"],
+                                "F": [lev_stat],
+                                "Sig.": [lev_p],
+                            }
+                        )
+                        homogeneity_display = homogeneity_table.copy()
+                        homogeneity_display["F"] = homogeneity_display["F"].map(
+                            lambda v: f"{v:.3f}" if pd.notna(v) else "-"
+                        )
+                        homogeneity_display["Sig."] = homogeneity_display["Sig."].map(
+                            lambda v: format_sig(v, decimals=3) if pd.notna(v) else "-"
+                        )
+
+                        st.write("**Homogeneity of Variance Test**")
+                        st.dataframe(homogeneity_display, hide_index=True)
+
+                        stat_eq, p_eq = stats.ttest_ind(g1, g2, equal_var=True)
+                        stat_neq, p_neq = stats.ttest_ind(g1, g2, equal_var=False)
+
+                        mean_diff = mean1 - mean2
+                        sp2 = (((n1 - 1) * var1) + ((n2 - 1) * var2)) / (n1 + n2 - 2) if (n1 > 1 and n2 > 1) else np.nan
+                        se_eq = np.sqrt(sp2 * (1 / n1 + 1 / n2)) if np.isfinite(sp2) and n1 > 0 and n2 > 0 else np.nan
+                        df_eq = n1 + n2 - 2
+                        se_neq = np.sqrt(var1 / n1 + var2 / n2) if (n1 > 0 and n2 > 0) else np.nan
+                        df_neq_num = (var1 / n1 + var2 / n2) ** 2
+                        df_neq_den = ((var1 / n1) ** 2) / (n1 - 1) + ((var2 / n2) ** 2) / (n2 - 1) if (n1 > 1 and n2 > 1) else np.nan
+                        df_neq = df_neq_num / df_neq_den if np.isfinite(df_neq_den) and df_neq_den != 0 else np.nan
+
+                        alpha = 0.05
+                        tcrit_eq = stats.t.ppf(1 - alpha / 2, df_eq) if df_eq > 0 else np.nan
+                        tcrit_neq = stats.t.ppf(1 - alpha / 2, df_neq) if np.isfinite(df_neq) else np.nan
+                        ci_low_eq = mean_diff - tcrit_eq * se_eq if np.isfinite(tcrit_eq) and np.isfinite(se_eq) else np.nan
+                        ci_high_eq = mean_diff + tcrit_eq * se_eq if np.isfinite(tcrit_eq) and np.isfinite(se_eq) else np.nan
+                        ci_low_neq = mean_diff - tcrit_neq * se_neq if np.isfinite(tcrit_neq) and np.isfinite(se_neq) else np.nan
+                        ci_high_neq = mean_diff + tcrit_neq * se_neq if np.isfinite(tcrit_neq) and np.isfinite(se_neq) else np.nan
+
+                        ttest_table = pd.DataFrame(
+                            [
+                                {
+                                    "": y_col,
+                                    " ": "Equal variances assumed",
+                                    "t": stat_eq,
+                                    "df": df_eq,
+                                    "One-Sided p": p_eq / 2,
+                                    "Two-Sided p": p_eq,
+                                    "Mean Difference": mean_diff,
+                                    "Std. Error Difference": se_eq,
+                                    "Lower": ci_low_eq,
+                                    "Upper": ci_high_eq,
+                                },
+                                {
+                                    "": "",
+                                    " ": "Equal variances not assumed",
+                                    "t": stat_neq,
+                                    "df": df_neq,
+                                    "One-Sided p": p_neq / 2,
+                                    "Two-Sided p": p_neq,
+                                    "Mean Difference": mean_diff,
+                                    "Std. Error Difference": se_neq,
+                                    "Lower": ci_low_neq,
+                                    "Upper": ci_high_neq,
+                                },
+                            ]
+                        )
+
+                        ttest_display = ttest_table.copy()
+                        for col in ["t", "Mean Difference", "Std. Error Difference", "Lower", "Upper"]:
+                            ttest_display[col] = ttest_display[col].map(
+                                lambda v: f"{v:.3f}" if pd.notna(v) else "-"
+                            )
+                        ttest_display["df"] = ttest_display["df"].map(
+                            lambda v: f"{v:.3f}" if pd.notna(v) and float(v) % 1 != 0 else (f"{int(v)}" if pd.notna(v) else "-")
+                        )
+                        ttest_display["One-Sided p"] = ttest_display["One-Sided p"].map(
+                            lambda v: format_sig(v, decimals=3) if pd.notna(v) else "-"
+                        )
+                        ttest_display["Two-Sided p"] = ttest_display["Two-Sided p"].map(
+                            lambda v: format_sig(v, decimals=3) if pd.notna(v) else "-"
+                        )
+
+                        st.write("**Independent Samples Test**")
+                        st.dataframe(ttest_display, hide_index=True)
+
+                        log_step(
+                            "Two-Group Tests",
+                            "Independent samples t-test table created",
+                            value=ttest_table,
+                        )
                     else:
                         stat, p = stats.mannwhitneyu(g1, g2, alternative="two-sided")
                         n1 = len(g1)
@@ -1147,17 +1243,290 @@ if uploaded_file is not None:
             # --- CORRELATIONS ---
             elif method_key in ['pearson', 'spearman', 'chi2']:
                 if method_key == 'chi2':
+                    raw_df = df[[x_col, y_col]]
+                    valid_mask = raw_df.notna().all(axis=1)
+                    valid_n = int(valid_mask.sum())
+                    total_n = int(len(raw_df))
+                    missing_n = int(total_n - valid_n)
+
+                    case_summary = pd.DataFrame(
+                        {
+                            "": [f"{x_col} * {y_col}"],
+                            "Valid N": [valid_n],
+                            "Valid Percent": [f"{(valid_n / total_n * 100) if total_n > 0 else 0:.1f}%"],
+                            "Missing N": [missing_n],
+                            "Missing Percent": [f"{(missing_n / total_n * 100) if total_n > 0 else 0:.1f}%"],
+                            "Total N": [total_n],
+                            "Total Percent": ["100.0%"],
+                        }
+                    )
+
+                    st.write("**Case Processing Summary**")
+                    st.dataframe(case_summary, hide_index=True)
+
                     ct = pd.crosstab(x_data, y_data)
-                    stat, p, _, _ = stats.chi2_contingency(ct)
-                    st.metric("P-Value", f"{p:.4e}")
-                    log_step("Chi-Square", f"Statistic={stat:.4f}, P={p:.4e}", value=ct)
+                    ct_numeric = ct.apply(pd.to_numeric, errors="coerce").fillna(0)
+                    chi2_stat, chi2_p, chi2_df, expected = stats.chi2_contingency(ct_numeric)
+                    expected_df = pd.DataFrame(expected, index=ct_numeric.index, columns=ct_numeric.columns)
+
+                    ct_index_labels = [str(i) for i in ct_numeric.index]
+                    ct_column_labels = [str(c) for c in ct_numeric.columns]
+
+                    crosstab_rows = []
+                    for idx_label in ct_index_labels:
+                        crosstab_rows.append((idx_label, "Count"))
+                        crosstab_rows.append((idx_label, "Expected Count"))
+                    crosstab_rows.append(("Total", "Count"))
+                    crosstab_rows.append(("Total", "Expected Count"))
+
+                    crosstab_index = pd.MultiIndex.from_tuples(crosstab_rows, names=[x_col, " "])
+                    crosstab_display = pd.DataFrame(index=crosstab_index, columns=ct_column_labels + ["Total"])
+
+                    for idx, idx_label in zip(ct_numeric.index, ct_index_labels):
+                        counts = ct_numeric.loc[idx]
+                        exp = expected_df.loc[idx]
+                        crosstab_display.loc[(idx_label, "Count"), ct_column_labels] = counts.values
+                        crosstab_display.loc[(idx_label, "Expected Count"), ct_column_labels] = exp.values
+                        crosstab_display.loc[(idx_label, "Count"), "Total"] = int(counts.sum())
+                        crosstab_display.loc[(idx_label, "Expected Count"), "Total"] = float(exp.sum())
+
+                    col_totals = ct_numeric.sum(axis=0)
+                    row_totals = ct_numeric.sum(axis=1)
+                    grand_total = int(ct_numeric.values.sum())
+                    crosstab_display.loc[("Total", "Count"), ct_column_labels] = col_totals.values
+                    crosstab_display.loc[("Total", "Count"), "Total"] = grand_total
+                    crosstab_display.loc[("Total", "Expected Count"), ct_column_labels] = col_totals.values
+                    crosstab_display.loc[("Total", "Expected Count"), "Total"] = grand_total
+
+                    def _format_crosstab_value(row_label, value):
+                        if value is None or (isinstance(value, float) and np.isnan(value)):
+                            return "-"
+                        if row_label == "Count":
+                            return f"{int(value)}"
+                        return f"{float(value):.1f}"
+
+                    crosstab_formatted = crosstab_display.copy()
+                    for idx in crosstab_formatted.index:
+                        row_label = idx[1]
+                        crosstab_formatted.loc[idx] = crosstab_formatted.loc[idx].map(
+                            lambda v: _format_crosstab_value(row_label, v)
+                        )
+
+                    st.write(f"**{x_col} * {y_col} Crosstabulation**")
+                    st.dataframe(crosstab_formatted)
+
+                    lr_stat, lr_p = stats.power_divergence(ct_numeric, f_exp=expected, axis=None, lambda_="log-likelihood")
+
+                    row_scores = np.arange(1, len(ct_numeric.index) + 1)
+                    col_scores = np.arange(1, len(ct_numeric.columns) + 1)
+                    row_totals = ct_numeric.sum(axis=1).values
+                    col_totals = ct_numeric.sum(axis=0).values
+                    n_total = ct_numeric.values.sum()
+                    r_bar = np.sum(row_totals * row_scores) / n_total if n_total > 0 else np.nan
+                    c_bar = np.sum(col_totals * col_scores) / n_total if n_total > 0 else np.nan
+                    num = 0.0
+                    for i, r in enumerate(row_scores):
+                        for j, c in enumerate(col_scores):
+                            num += ct_numeric.values[i, j] * (r - r_bar) * (c - c_bar)
+                    den_r = np.sum(row_totals * (row_scores - r_bar) ** 2)
+                    den_c = np.sum(col_totals * (col_scores - c_bar) ** 2)
+                    denom = np.sqrt(den_r * den_c) if den_r > 0 and den_c > 0 else np.nan
+                    r_val = num / denom if denom and np.isfinite(denom) else np.nan
+                    lbl_stat = (n_total - 1) * (r_val ** 2) if np.isfinite(r_val) else np.nan
+                    lbl_p = 1 - stats.chi2.cdf(lbl_stat, df=1) if np.isfinite(lbl_stat) else np.nan
+
+                    chi_table = pd.DataFrame(
+                        [
+                            {
+                                "": "Pearson Chi-Square",
+                                "Value": chi2_stat,
+                                "df": chi2_df,
+                                "Asymptotic Significance (2-sided)": chi2_p,
+                            },
+                            {
+                                "": "Likelihood Ratio",
+                                "Value": lr_stat,
+                                "df": chi2_df,
+                                "Asymptotic Significance (2-sided)": lr_p,
+                            },
+                            {
+                                "": "Linear-by-Linear Association",
+                                "Value": lbl_stat,
+                                "df": 1,
+                                "Asymptotic Significance (2-sided)": lbl_p,
+                            },
+                            {
+                                "": "N of Valid Cases",
+                                "Value": valid_n,
+                                "df": "",
+                                "Asymptotic Significance (2-sided)": "",
+                            },
+                        ]
+                    )
+
+                    chi_display = chi_table.copy()
+                    chi_display["Value"] = chi_display["Value"].map(
+                        lambda v: f"{v:.3f}" if isinstance(v, (int, float, np.floating)) and pd.notna(v) else v
+                    )
+                    chi_display["df"] = chi_display["df"].map(
+                        lambda v: f"{int(v)}" if isinstance(v, (int, float, np.floating)) and pd.notna(v) else v
+                    )
+                    chi_display["Asymptotic Significance (2-sided)"] = chi_display[
+                        "Asymptotic Significance (2-sided)"
+                    ].map(
+                        lambda v: format_sig(v, decimals=3) if isinstance(v, (int, float, np.floating)) and pd.notna(v) else v
+                    )
+
+                    st.write("**Chi-Square Tests**")
+                    st.dataframe(chi_display, hide_index=True)
+
+                    fig, ax = plt.subplots()
+                    sns.heatmap(ct_numeric, annot=True, fmt="d", cmap="Blues", ax=ax)
+                    ax.set_title("Observed Counts Heatmap")
+                    st.pyplot(fig)
+
+                    st.metric("P-Value", f"{chi2_p:.4e}")
+                    log_step("Chi-Square", f"Statistic={chi2_stat:.4f}, P={chi2_p:.4e}", value=ct)
                 else:
                     log_step("Correlation", "X data (head)", value=x_data.head(10))
                     log_step("Correlation", "Y data (head)", value=y_data.head(10))
                     if method_key == 'pearson':
                         stat, p = stats.pearsonr(x_data, y_data)
+
+                        x_vals = x_data.to_numpy(dtype=float)
+                        y_vals = y_data.to_numpy(dtype=float)
+                        n = len(x_vals)
+                        x_mean = float(np.mean(x_vals)) if n > 0 else np.nan
+                        y_mean = float(np.mean(y_vals)) if n > 0 else np.nan
+                        x_dev = x_vals - x_mean
+                        y_dev = y_vals - y_mean
+                        ssx = float(np.sum(x_dev ** 2)) if n > 0 else np.nan
+                        ssy = float(np.sum(y_dev ** 2)) if n > 0 else np.nan
+                        cross = float(np.sum(x_dev * y_dev)) if n > 0 else np.nan
+                        cov_xy = cross / (n - 1) if n > 1 else np.nan
+                        cov_xx = ssx / (n - 1) if n > 1 else np.nan
+                        cov_yy = ssy / (n - 1) if n > 1 else np.nan
+
+                        sig_mark = "***" if p < 0.001 else ""
+
+                        corr_table = pd.DataFrame(
+                            [
+                                {
+                                    "Variable": x_col,
+                                    "Statistic": "Pearson Correlation",
+                                    x_col: f"{1:.3f}",
+                                    y_col: f"{stat:.3f}{sig_mark}",
+                                },
+                                {
+                                    "Variable": "",
+                                    "Statistic": "Sig. (2-tailed)",
+                                    x_col: "-",
+                                    y_col: format_sig(p, decimals=3),
+                                },
+                                {
+                                    "Variable": "",
+                                    "Statistic": "Sum of Squares and Cross-products",
+                                    x_col: f"{ssx:.3f}",
+                                    y_col: f"{cross:.3f}",
+                                },
+                                {
+                                    "Variable": "",
+                                    "Statistic": "Covariance",
+                                    x_col: f"{cov_xx:.3f}",
+                                    y_col: f"{cov_xy:.3f}",
+                                },
+                                {
+                                    "Variable": "",
+                                    "Statistic": "N",
+                                    x_col: f"{n}",
+                                    y_col: f"{n}",
+                                },
+                                {
+                                    "Variable": y_col,
+                                    "Statistic": "Pearson Correlation",
+                                    x_col: f"{stat:.3f}{sig_mark}",
+                                    y_col: f"{1:.3f}",
+                                },
+                                {
+                                    "Variable": "",
+                                    "Statistic": "Sig. (2-tailed)",
+                                    x_col: format_sig(p, decimals=3),
+                                    y_col: "-",
+                                },
+                                {
+                                    "Variable": "",
+                                    "Statistic": "Sum of Squares and Cross-products",
+                                    x_col: f"{cross:.3f}",
+                                    y_col: f"{ssy:.3f}",
+                                },
+                                {
+                                    "Variable": "",
+                                    "Statistic": "Covariance",
+                                    x_col: f"{cov_xy:.3f}",
+                                    y_col: f"{cov_yy:.3f}",
+                                },
+                                {
+                                    "Variable": "",
+                                    "Statistic": "N",
+                                    x_col: f"{n}",
+                                    y_col: f"{n}",
+                                },
+                            ]
+                        )
+
+                        st.write("**Correlations**")
+                        st.dataframe(corr_table, hide_index=True)
+                        st.caption("***. Correlation is significant at the 0.001 level (2-tailed).")
                     else:
                         stat, p = stats.spearmanr(x_data, y_data)
+
+                        n = int(len(x_data))
+                        sig_mark = "***" if p < 0.001 else ""
+
+                        spearman_table = pd.DataFrame(
+                            [
+                                {
+                                    "Spearman's rho": x_col,
+                                    "Statistic": "Correlation Coefficient",
+                                    x_col: f"{1:.3f}",
+                                    y_col: f"{stat:.3f}{sig_mark}",
+                                },
+                                {
+                                    "Spearman's rho": "",
+                                    "Statistic": "Sig. (2-tailed)",
+                                    x_col: "-",
+                                    y_col: format_sig(p, decimals=3),
+                                },
+                                {
+                                    "Spearman's rho": "",
+                                    "Statistic": "N",
+                                    x_col: f"{n}",
+                                    y_col: f"{n}",
+                                },
+                                {
+                                    "Spearman's rho": y_col,
+                                    "Statistic": "Correlation Coefficient",
+                                    x_col: f"{stat:.3f}{sig_mark}",
+                                    y_col: f"{1:.3f}",
+                                },
+                                {
+                                    "Spearman's rho": "",
+                                    "Statistic": "Sig. (2-tailed)",
+                                    x_col: format_sig(p, decimals=3),
+                                    y_col: "-",
+                                },
+                                {
+                                    "Spearman's rho": "",
+                                    "Statistic": "N",
+                                    x_col: f"{n}",
+                                    y_col: f"{n}",
+                                },
+                            ]
+                        )
+
+                        st.write("**Correlations**")
+                        st.dataframe(spearman_table, hide_index=True)
+                        st.caption("***. Correlation is significant at the 0.001 level (2-tailed).")
                     st.metric("Correlation", f"{stat:.4f}", delta=f"P={p:.4e}")
                     log_step("Correlation", f"Statistic={stat:.4f}, P={p:.4e}", value={"stat": stat, "p": p})
                     fig, ax = plt.subplots()
