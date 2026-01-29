@@ -50,6 +50,13 @@ This tool bridges the gap between raw data and actionable insights by providing 
 **Categorical Analysis:**
 * Chi-Square Test of Independence
 
+#### SPSS-Style Output Tables
+* **Independent T-Test:** Homogeneity of variance (Levene) and Independent Samples Test tables
+* **Mann-Whitney U:** Summary table (U, W, z, SE, p)
+* **Pearson & Spearman:** Correlations tables with SPSS-style layout
+* **Chi-Square:** Case Processing Summary, Crosstabulation (counts + expected), Chi-Square Tests
+* **P-Value Formatting:** Values < 0.001 are displayed as “<0.001” in output tables
+
 #### Post-Hoc Analysis
 * **Tukey HSD:** Automatically triggered after significant ANOVA results
 * **Pairwise Mann-Whitney U:** Automatically triggered after significant Kruskal-Wallis results
@@ -62,6 +69,7 @@ This tool bridges the gap between raw data and actionable insights by providing 
 * **Boxplots:** Automatically generated for group comparisons
 * **Scatter Plots:** With regression lines for correlation analyses
 * **Heatmaps:** For post-hoc pairwise comparison results
+* **Crosstab Heatmap:** Observed count heatmap for Chi-Square analysis
 
 ### 🧾 Calculation Details Panel
 * **Real-Time Logging:** See exactly what calculations are being performed
@@ -269,3 +277,12 @@ Built with:
 ---
 
 **Made with ❤️ for researchers, students, and data analysts who value privacy and transparency in statistical analysis.**
+
+## References
+[1] H. Y. Kim, "Statistical notes for clinical researchers: Assessing normal distribution using skewness and kurtosis," Restor. Dent. Endod., vol. 38, no. 1, pp. 52–54, Feb. 2013.
+
+[2] A. Ghasemi and S. Zahediasl, "Normality tests for statistical analysis: A guide for non-statisticians," Int. J. Endocrinol. Metab., vol. 10, no. 2, pp. 486–489, Apr. 2012.
+
+[3] P. Mishra, C. M. Pandey, U. Singh, A. Gupta, C. Sahu, and A. Keshri, "Descriptive statistics and normality tests for statistical data," Ann. Card. Anaesth., vol. 22, no. 1, pp. 67–72, Jan. 2019.
+
+[4] A. Field, Discovering Statistics Using IBM SPSS Statistics, 5th ed. Thousand Oaks, CA, USA: SAGE Publications, 2018.
