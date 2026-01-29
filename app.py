@@ -128,6 +128,26 @@ def _format_calc_value(value, max_rows=20, max_chars=1200):
     except Exception:
         return str(value)
 
+def format_sig(value, decimals=3):
+    if value is None:
+        return "-"
+    if isinstance(value, str):
+        return value
+    try:
+        if pd.isna(value):
+            return "-"
+    except Exception:
+        pass
+    try:
+        val = float(value)
+    except Exception:
+        return value
+    if np.isnan(val):
+        return "-"
+    if val < 0.001:
+        return "<0.001"
+    return f"{val:.{decimals}f}"
+
 def log_step(section, message, level="info", value=None):
     st.session_state.calc_logs.append(
         {
@@ -315,25 +335,30 @@ if uploaded_file is not None:
 
                     shapiro_p = "-"
                     lillie_p = "-"
+                    shapiro_p_raw = None
+                    lillie_p_raw = None
                     if N <= 2000:
                         try:
                             _, p = stats.shapiro(data)
-                            shapiro_p = f"{p:.4f}"
+                            shapiro_p_raw = p
+                            shapiro_p = format_sig(p, decimals=4)
                         except Exception:
                             shapiro_p = "-"
 
                         try:
                             _, p = lilliefors(data, dist="norm")
-                            lillie_p = f"{p:.4f}"
+                            lillie_p_raw = p
+                            lillie_p = format_sig(p, decimals=4)
                         except Exception:
                             lillie_p = "-"
 
                         z_limit = 1.96 if N < 50 else 3.29
-                        z_ok = (abs(z_skew) <= z_limit) and (abs(z_kurt) <= z_limit)
-                        shapiro_ok = (shapiro_p != "-") and (float(shapiro_p) > 0.05)
-                        lillie_ok = (lillie_p != "-") and (float(lillie_p) > 0.05)
-                        test_ok = shapiro_ok and lillie_ok
-                        conclusion = "Normal ✅" if (test_ok and z_ok) else "Non-Normal ⚠️"
+                        shapiro_ok = (shapiro_p_raw is not None) and (shapiro_p_raw > 0.05)
+                        lillie_ok = (lillie_p_raw is not None) and (lillie_p_raw > 0.05)
+                        z_ok = (abs(z_skew) <= z_limit) and (abs(z_kurt) <= z_limit) if (N<=300) else False
+                        s_ok = (abs(skew) < 2.0 and abs(kurt) < 7.0) if (N>300) else False
+                        test_ok = shapiro_ok if (N<50) else lillie_ok if (N<=300) else False
+                        conclusion = "Normal ✅" if (test_ok or z_ok or s_ok) else "Non-Normal ⚠️"
                         test_name = "Shapiro & Lilliefors"
                     else:
                         normal_enough = (abs(skew) < 2.0) and (abs(kurt) < 7.0)
@@ -618,7 +643,7 @@ if uploaded_file is not None:
                         "Group": g, "N": len(g_data),
                         f"{metric_name}": f"{metric_val:.2f}",
                         "Diff": f"{diff:.2f}",
-                        "P-Value": f"{p_val:.4e}", "Result": sig
+                        "P-Value": format_sig(p_val, decimals=3), "Result": sig
                     })
                     log_step("One-Sample Tests", f"Group {g}: {metric_name}={metric_val:.4f}, P={p_val:.4e}")
 
@@ -633,15 +658,18 @@ if uploaded_file is not None:
                             lambda v: f"{v:.2f}" if isinstance(v, (int, float, np.floating)) and pd.notna(v) else v
                         )
                         display_table["Exact Sig. (2-tailed)"] = display_table["Exact Sig. (2-tailed)"].map(
-                            lambda v: f"{v:.3f}" if isinstance(v, (int, float, np.floating)) and pd.notna(v) else v
+                            lambda v: format_sig(v, decimals=3) if isinstance(v, (int, float, np.floating)) and pd.notna(v) else v
                         )
                         st.dataframe(display_table, hide_index=True)
                 elif method_key == 'wilcoxon':
                     for g, table in wilcoxon_tables:
                         st.write(f"**One-Sample Wilcoxon Signed Rank Test Summary ({g})**")
                         display_table = table.copy()
-                        display_table["Value"] = display_table["Value"].map(
-                            lambda v: f"{v:.3f}" if isinstance(v, (int, float, np.floating)) and pd.notna(v) else v
+                        display_table["Value"] = display_table.apply(
+                            lambda row: format_sig(row["Value"], decimals=3)
+                            if isinstance(row["Value"], (int, float, np.floating)) and pd.notna(row["Value"]) and "Sig" in str(row[""])
+                            else (f"{row['Value']:.3f}" if isinstance(row["Value"], (int, float, np.floating)) and pd.notna(row["Value"]) else row["Value"]),
+                            axis=1,
                         )
                         st.dataframe(display_table, hide_index=True)
                 else:
@@ -713,10 +741,13 @@ if uploaded_file is not None:
                     ])
 
                     homogeneity_display = homogeneity_table.copy()
-                    for col in ["Levene Statistic", "df1", "df2", "Sig."]:
+                    for col in ["Levene Statistic", "df1", "df2"]:
                         homogeneity_display[col] = homogeneity_display[col].map(
                             lambda v: f"{v:.3f}" if pd.notna(v) else "-"
                         )
+                    homogeneity_display["Sig."] = homogeneity_display["Sig."].map(
+                        lambda v: format_sig(v, decimals=3) if pd.notna(v) else "-"
+                    )
 
                     st.write("**Tests of Homogeneity of Variances**")
                     st.dataframe(homogeneity_display, hide_index=True)
@@ -783,10 +814,13 @@ if uploaded_file is not None:
                     ])
 
                     anova_display = anova_table.copy()
-                    for col in ["Sum of Squares", "Mean Square", "F", "Sig."]:
+                    for col in ["Sum of Squares", "Mean Square", "F"]:
                         anova_display[col] = anova_display[col].map(
                             lambda v: f"{v:.3f}" if isinstance(v, (int, float, np.floating)) and pd.notna(v) else v
                         )
+                    anova_display["Sig."] = anova_display["Sig."].map(
+                        lambda v: format_sig(v, decimals=3) if isinstance(v, (int, float, np.floating)) and pd.notna(v) else v
+                    )
                     anova_display["df"] = anova_display["df"].map(
                         lambda v: f"{int(v)}" if isinstance(v, (int, float, np.floating)) and pd.notna(v) else v
                     )
@@ -824,9 +858,14 @@ if uploaded_file is not None:
 
                         tukey_display = tukey_df.copy()
                         for col in ["Mean Difference (I-J)", "Sig.", "Lower Bound", "Upper Bound"]:
-                            tukey_display[col] = tukey_display[col].map(
-                                lambda v: f"{v:.3f}" if pd.notna(v) else "-"
-                            )
+                            if col == "Sig.":
+                                tukey_display[col] = tukey_display[col].map(
+                                    lambda v: format_sig(v, decimals=3) if pd.notna(v) else "-"
+                                )
+                            else:
+                                tukey_display[col] = tukey_display[col].map(
+                                    lambda v: f"{v:.3f}" if pd.notna(v) else "-"
+                                )
 
                         st.write("**Multiple Comparisons (Tukey HSD)**")
                         if not equal_var:
@@ -877,9 +916,14 @@ if uploaded_file is not None:
                             gh_df = pd.DataFrame(rows)
                             gh_display = gh_df.copy()
                             for col in ["Mean Difference (I-J)", "Std. Error", "Sig.", "Lower Bound", "Upper Bound"]:
-                                gh_display[col] = gh_display[col].map(
-                                    lambda v: f"{v:.3f}" if pd.notna(v) else "-"
-                                )
+                                if col == "Sig.":
+                                    gh_display[col] = gh_display[col].map(
+                                        lambda v: format_sig(v, decimals=3) if pd.notna(v) else "-"
+                                    )
+                                else:
+                                    gh_display[col] = gh_display[col].map(
+                                        lambda v: f"{v:.3f}" if pd.notna(v) else "-"
+                                    )
 
                             st.write("**Multiple Comparisons (Games-Howell)**")
                             st.dataframe(gh_display, hide_index=True)
@@ -968,7 +1012,14 @@ if uploaded_file is not None:
                         results_df = pd.DataFrame(results_rows)
                         results_df_display = results_df.copy()
                         for col in ["Test Statistic", "Std. Error", "Std. Test Statistic", "Sig.", "Adj. Sig."]:
-                            results_df_display[col] = results_df_display[col].map(lambda v: f"{v:.3f}" if pd.notna(v) else "-")
+                            if col in ["Sig.", "Adj. Sig."]:
+                                results_df_display[col] = results_df_display[col].map(
+                                    lambda v: format_sig(v, decimals=3) if pd.notna(v) else "-"
+                                )
+                            else:
+                                results_df_display[col] = results_df_display[col].map(
+                                    lambda v: f"{v:.3f}" if pd.notna(v) else "-"
+                                )
 
                         st.write("**Pairwise Comparisons (Dunn's Test - Global Ranks):**")
                         st.dataframe(results_df_display, hide_index=True)
@@ -1037,10 +1088,58 @@ if uploaded_file is not None:
                     log_step("Two-Group Tests", f"Group {groups[1]} data (head)", value=g2.head(10))
                     if method_key == 'ttest_ind':
                         stat, p = stats.ttest_ind(g1, g2)
+                        st.metric("P-Value", f"{p:.4e}")
+                        log_step("Two-Group Tests", f"Statistic={stat:.4f}, P={p:.4e}", value={"stat": stat, "p": p})
                     else:
-                        stat, p = stats.mannwhitneyu(g1, g2)
-                    st.metric("P-Value", f"{p:.4e}")
-                    log_step("Two-Group Tests", f"Statistic={stat:.4f}, P={p:.4e}", value={"stat": stat, "p": p})
+                        stat, p = stats.mannwhitneyu(g1, g2, alternative="two-sided")
+                        n1 = len(g1)
+                        n2 = len(g2)
+                        total_n = n1 + n2
+                        combined = np.concatenate([g1.values, g2.values])
+                        ranks = stats.rankdata(combined)
+                        rank_sum1 = float(ranks[:n1].sum())
+                        rank_sum2 = float(ranks[n1:].sum())
+                        wilcoxon_w = rank_sum1 if n1 <= n2 else rank_sum1
+                        mean_u = n1 * n2 / 2
+                        if total_n > 1:
+                            tie_counts = pd.Series(combined).value_counts()
+                            tie_sum = float(((tie_counts**3 - tie_counts).sum()))
+                            variance_u = n1 * n2 / 12 * ((total_n + 1) - tie_sum / (total_n * (total_n - 1)))
+                        else:
+                            variance_u = 0.0
+                        se_u = np.sqrt(variance_u) if variance_u > 0 else np.nan
+                        z_stat = (stat - mean_u) / se_u if np.isfinite(se_u) and se_u != 0 else np.nan
+
+                        summary_df = pd.DataFrame(
+                            {
+                                "": [
+                                    "Total N",
+                                    "Mann-Whitney U",
+                                    "Wilcoxon W",
+                                    "Test Statistic",
+                                    "Standard Error",
+                                    "Standardized Test Statistic",
+                                    "Asymptotic Sig.(2-sided test)",
+                                ],
+                                "Value": [
+                                    f"{total_n}",
+                                    f"{stat:.3f}",
+                                    f"{wilcoxon_w:.3f}",
+                                    f"{stat:.3f}",
+                                    f"{se_u:.3f}" if np.isfinite(se_u) else "-",
+                                    f"{z_stat:.3f}" if np.isfinite(z_stat) else "-",
+                                    "<0.001" if p < 0.001 else f"{p:.3f}",
+                                ],
+                            }
+                        )
+                        st.subheader("Independent-Samples Mann-Whitney U Test Summary")
+                        st.table(summary_df)
+                        log_step(
+                            "Two-Group Tests",
+                            "Mann-Whitney summary table created",
+                            value=summary_df,
+                        )
+
                     fig, ax = plt.subplots(figsize=(8, 4))
                     sns.boxplot(x=x_col, y=y_col, data=df_clean, hue=x_col, palette="Set2", legend=False, ax=ax)
                     st.pyplot(fig)
